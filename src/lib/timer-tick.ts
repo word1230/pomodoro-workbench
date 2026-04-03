@@ -4,6 +4,7 @@ export const idleTimer: TimerState = {
   phase: 'idle',
   running: false,
   remainingSec: 0,
+  plannedDurationSec: 0,
   targetPomodoros: 0,
   completedPomodoros: 0,
   todoId: null,

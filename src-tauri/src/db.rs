@@ -1,11 +1,15 @@
-use std::{fs, path::PathBuf};
+use std::{collections::HashSet, fs, path::PathBuf};
 
 use chrono::{Duration, Local, Utc};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, types::Type, Connection, OptionalExtension};
+use serde_json::{from_str, to_string as to_json_string};
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
-use crate::models::{AppSettings, AppSnapshot, FocusSession, FocusSessionDraft, Project, ProjectDraft, Todo, TodoDraft};
+use crate::models::{
+    AiReviewRecord, AiReviewRecordDraft, AppSettings, AppSnapshot, FocusSession, FocusSessionDraft,
+    FocusFeedbackDraft, FocusFeedbackLog, Project, ProjectDraft, Todo, TodoDraft,
+};
 
 type AppResult<T> = Result<T, String>;
 
@@ -148,13 +152,14 @@ pub fn save_todo(app: &AppHandle, todo: TodoDraft) -> AppResult<AppSnapshot> {
         connection
             .execute(
                 "UPDATE todos
-                 SET project_id = ?2, title = ?3, description = ?4, notes = ?5, status = ?6,
-                     priority = ?7, estimated_pomodoros = ?8, due_date = ?9, is_today = ?10, completed_at = ?11
+                 SET project_id = ?2, title = ?3, quick_start_step = ?4, description = ?5, notes = ?6, status = ?7,
+                     priority = ?8, estimated_pomodoros = ?9, due_date = ?10, is_today = ?11, completed_at = ?12
                  WHERE id = ?1",
                 params![
                     id,
                     todo.project_id,
                     todo.title,
+                    todo.quick_start_step,
                     todo.description,
                     todo.notes,
                     todo.status,
@@ -170,13 +175,14 @@ pub fn save_todo(app: &AppHandle, todo: TodoDraft) -> AppResult<AppSnapshot> {
         connection
             .execute(
                 "INSERT INTO todos (
-                    id, project_id, title, description, notes, status, priority,
+                    id, project_id, title, quick_start_step, description, notes, status, priority,
                     estimated_pomodoros, completed_pomodoros, due_date, is_today, created_at, completed_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, ?11, ?12)",
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, ?12, ?13)",
                 params![
                     Uuid::new_v4().to_string(),
                     todo.project_id,
                     todo.title,
+                    todo.quick_start_step,
                     todo.description,
                     todo.notes,
                     todo.status,
@@ -213,7 +219,8 @@ pub fn save_settings(app: &AppHandle, settings: AppSettings) -> AppResult<AppSna
             "UPDATE settings
              SET focus_minutes = ?1, short_break_minutes = ?2, long_break_minutes = ?3,
                  long_break_interval = ?4, auto_start_breaks = ?5, auto_start_focus = ?6,
-                 notifications_enabled = ?7, minimize_to_tray = ?8, launch_on_startup = ?9, sound_enabled = ?10
+                 notifications_enabled = ?7, minimize_to_tray = ?8, launch_on_startup = ?9, sound_enabled = ?10,
+                 ai_base_url = ?11, ai_api_key = ?12, ai_model_id = ?13
              WHERE id = 1",
             params![
                 settings.focus_minutes,
@@ -225,7 +232,10 @@ pub fn save_settings(app: &AppHandle, settings: AppSettings) -> AppResult<AppSna
                 bool_to_int(settings.notifications_enabled),
                 bool_to_int(settings.minimize_to_tray),
                 bool_to_int(settings.launch_on_startup),
-                bool_to_int(settings.sound_enabled)
+                bool_to_int(settings.sound_enabled),
+                settings.ai_base_url,
+                settings.ai_api_key,
+                settings.ai_model_id
             ],
         )
         .map_err(to_string)?;
@@ -313,6 +323,163 @@ pub fn load_settings(app: &AppHandle) -> AppResult<AppSettings> {
     load_settings_from_connection(&connection)
 }
 
+pub fn load_ai_reviews(app: &AppHandle) -> AppResult<Vec<AiReviewRecord>> {
+    let connection = connection(app)?;
+    create_schema(&connection)?;
+    ensure_settings(&connection)?;
+    load_ai_reviews_from_connection(&connection)
+}
+
+pub fn save_ai_review(app: &AppHandle, review: AiReviewRecordDraft) -> AppResult<AiReviewRecord> {
+    let connection = connection(app)?;
+    create_schema(&connection)?;
+    ensure_settings(&connection)?;
+    let record = AiReviewRecord {
+        id: Uuid::new_v4().to_string(),
+        scope: review.scope,
+        project_id: review.project_id,
+        project_name: review.project_name,
+        timeframe: review.timeframe,
+        created_at: Utc::now().to_rfc3339(),
+        summary: review.summary,
+        issues: review.issues,
+        suggestions: review.suggestions,
+    };
+
+    connection
+        .execute(
+            "INSERT INTO ai_reviews (
+                id, scope, project_id, project_name, timeframe, created_at,
+                summary_json, issues_json, suggestions_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                record.id,
+                record.scope,
+                record.project_id,
+                record.project_name,
+                record.timeframe,
+                record.created_at,
+                to_json_string(&record.summary).map_err(to_string)?,
+                to_json_string(&record.issues).map_err(to_string)?,
+                to_json_string(&record.suggestions).map_err(to_string)?,
+            ],
+        )
+        .map_err(to_string)?;
+
+    Ok(record)
+}
+
+pub fn save_focus_feedback_log(
+    app: &AppHandle,
+    feedback: FocusFeedbackDraft,
+) -> AppResult<FocusFeedbackLog> {
+    let connection = connection(app)?;
+    create_schema(&connection)?;
+    ensure_settings(&connection)?;
+
+    let completed_text = feedback.completed_text.trim().to_string();
+    let issue_text = feedback.issue_text.trim().to_string();
+    let risk_text = feedback.risk_text.trim().to_string();
+
+    if completed_text.is_empty() {
+        return Err("请先填写本轮已完成内容".to_string());
+    }
+
+    let todo_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM todos WHERE id = ?1 AND project_id = ?2",
+            params![feedback.todo_id, feedback.project_id],
+            |row| row.get(0),
+        )
+        .map_err(to_string)?;
+    if todo_count == 0 {
+        return Err("当前任务已变更，请重新选择后再生成".to_string());
+    }
+
+    if let Some(session_id) = feedback.session_id.as_ref() {
+        let session_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM focus_sessions WHERE id = ?1 AND todo_id = ?2 AND project_id = ?3",
+                params![session_id, feedback.todo_id, feedback.project_id],
+                |row| row.get(0),
+            )
+            .map_err(to_string)?;
+        if session_count == 0 {
+            return Err("关联的番茄记录不存在，请重新生成".to_string());
+        }
+    }
+
+    let record = FocusFeedbackLog {
+        id: Uuid::new_v4().to_string(),
+        project_id: feedback.project_id,
+        todo_id: feedback.todo_id,
+        session_id: feedback.session_id,
+        completed_text,
+        issue_text,
+        risk_text,
+        created_at: Utc::now().to_rfc3339(),
+    };
+
+    connection
+        .execute(
+            "INSERT INTO focus_feedback_logs (
+                id, project_id, todo_id, session_id, completed_text, issue_text, risk_text, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                record.id,
+                record.project_id,
+                record.todo_id,
+                record.session_id,
+                record.completed_text,
+                record.issue_text,
+                record.risk_text,
+                record.created_at,
+            ],
+        )
+        .map_err(to_string)?;
+
+    Ok(record)
+}
+
+pub fn load_recent_focus_feedback_logs(
+    app: &AppHandle,
+    project_id: &str,
+    limit: i64,
+) -> AppResult<Vec<FocusFeedbackLog>> {
+    let connection = connection(app)?;
+    create_schema(&connection)?;
+    ensure_settings(&connection)?;
+    let limit = limit.clamp(1, 50);
+
+    let mut statement = connection
+        .prepare(
+            "SELECT
+                id, project_id, todo_id, session_id, completed_text, issue_text, risk_text, created_at
+             FROM focus_feedback_logs
+             WHERE project_id = ?1
+             ORDER BY created_at DESC
+             LIMIT ?2",
+        )
+        .map_err(to_string)?;
+
+    let rows = statement
+        .query_map(params![project_id, limit], |row| {
+            Ok(FocusFeedbackLog {
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                todo_id: row.get(2)?,
+                session_id: row.get(3)?,
+                completed_text: row.get(4)?,
+                issue_text: row.get(5)?,
+                risk_text: row.get(6)?,
+                created_at: row.get(7)?,
+            })
+        })
+        .map_err(to_string)?;
+
+    rows.collect::<Result<Vec<_>, _>>().map_err(to_string)
+}
+
 fn load_snapshot_from_connection(connection: &Connection) -> AppResult<AppSnapshot> {
     Ok(AppSnapshot {
         settings: load_settings_from_connection(connection)?,
@@ -328,7 +495,7 @@ fn load_settings_from_connection(connection: &Connection) -> AppResult<AppSettin
             "SELECT
                 focus_minutes, short_break_minutes, long_break_minutes, long_break_interval,
                 auto_start_breaks, auto_start_focus, notifications_enabled, minimize_to_tray,
-                launch_on_startup, sound_enabled
+                launch_on_startup, sound_enabled, ai_base_url, ai_api_key, ai_model_id
              FROM settings
              WHERE id = 1",
             [],
@@ -344,6 +511,9 @@ fn load_settings_from_connection(connection: &Connection) -> AppResult<AppSettin
                     minimize_to_tray: int_to_bool(row.get::<_, i64>(7)?),
                     launch_on_startup: int_to_bool(row.get::<_, i64>(8)?),
                     sound_enabled: int_to_bool(row.get::<_, i64>(9)?),
+                    ai_base_url: row.get(10)?,
+                    ai_api_key: row.get(11)?,
+                    ai_model_id: row.get(12)?,
                 })
             },
         )
@@ -382,7 +552,7 @@ fn load_todos(connection: &Connection) -> AppResult<Vec<Todo>> {
     let mut statement = connection
         .prepare(
             "SELECT
-                id, project_id, title, description, notes, status, priority,
+                id, project_id, title, quick_start_step, description, notes, status, priority,
                 estimated_pomodoros, completed_pomodoros, due_date, is_today, created_at, completed_at
              FROM todos
              ORDER BY is_today DESC, created_at DESC",
@@ -395,16 +565,17 @@ fn load_todos(connection: &Connection) -> AppResult<Vec<Todo>> {
                 id: row.get(0)?,
                 project_id: row.get(1)?,
                 title: row.get(2)?,
-                description: row.get(3)?,
-                notes: row.get(4)?,
-                status: row.get(5)?,
-                priority: row.get(6)?,
-                estimated_pomodoros: row.get(7)?,
-                completed_pomodoros: row.get(8)?,
-                due_date: row.get(9)?,
-                is_today: int_to_bool(row.get::<_, i64>(10)?),
-                created_at: row.get(11)?,
-                completed_at: row.get(12)?,
+                quick_start_step: row.get(3)?,
+                description: row.get(4)?,
+                notes: row.get(5)?,
+                status: row.get(6)?,
+                priority: row.get(7)?,
+                estimated_pomodoros: row.get(8)?,
+                completed_pomodoros: row.get(9)?,
+                due_date: row.get(10)?,
+                is_today: int_to_bool(row.get::<_, i64>(11)?),
+                created_at: row.get(12)?,
+                completed_at: row.get(13)?,
             })
         })
         .map_err(to_string)?;
@@ -443,6 +614,49 @@ fn load_sessions(connection: &Connection) -> AppResult<Vec<FocusSession>> {
     rows.collect::<Result<Vec<_>, _>>().map_err(to_string)
 }
 
+fn load_ai_reviews_from_connection(connection: &Connection) -> AppResult<Vec<AiReviewRecord>> {
+    let mut statement = connection
+        .prepare(
+            "SELECT
+                id, scope, project_id, project_name, timeframe, created_at,
+                summary_json, issues_json, suggestions_json
+             FROM ai_reviews
+             ORDER BY created_at DESC",
+        )
+        .map_err(to_string)?;
+
+    let rows = statement
+        .query_map([], |row| {
+            let summary_json = row.get::<_, String>(6)?;
+            let issues_json = row.get::<_, String>(7)?;
+            let suggestions_json = row.get::<_, String>(8)?;
+            let summary = from_str(&summary_json).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(6, Type::Text, Box::new(error))
+            })?;
+            let issues = from_str(&issues_json).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(7, Type::Text, Box::new(error))
+            })?;
+            let suggestions = from_str(&suggestions_json).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(8, Type::Text, Box::new(error))
+            })?;
+
+            Ok(AiReviewRecord {
+                id: row.get(0)?,
+                scope: row.get(1)?,
+                project_id: row.get(2)?,
+                project_name: row.get(3)?,
+                timeframe: row.get(4)?,
+                created_at: row.get(5)?,
+                summary,
+                issues,
+                suggestions,
+            })
+        })
+        .map_err(to_string)?;
+
+    rows.collect::<Result<Vec<_>, _>>().map_err(to_string)
+}
+
 fn connection(app: &AppHandle) -> AppResult<Connection> {
     let path = database_path(app)?;
     let connection = Connection::open(path).map_err(to_string)?;
@@ -471,7 +685,10 @@ fn create_schema(connection: &Connection) -> AppResult<()> {
                 notifications_enabled INTEGER NOT NULL,
                 minimize_to_tray INTEGER NOT NULL,
                 launch_on_startup INTEGER NOT NULL,
-                sound_enabled INTEGER NOT NULL
+                sound_enabled INTEGER NOT NULL,
+                ai_base_url TEXT NOT NULL DEFAULT '',
+                ai_api_key TEXT NOT NULL DEFAULT '',
+                ai_model_id TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS projects (
@@ -488,6 +705,7 @@ fn create_schema(connection: &Connection) -> AppResult<()> {
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,
                 title TEXT NOT NULL,
+                quick_start_step TEXT NOT NULL DEFAULT '',
                 description TEXT NOT NULL DEFAULT '',
                 notes TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL,
@@ -512,9 +730,35 @@ fn create_schema(connection: &Connection) -> AppResult<()> {
                 result TEXT NOT NULL,
                 interrupt_reason TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS ai_reviews (
+                id TEXT PRIMARY KEY,
+                scope TEXT NOT NULL,
+                project_id TEXT,
+                project_name TEXT,
+                timeframe TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                summary_json TEXT NOT NULL,
+                issues_json TEXT NOT NULL,
+                suggestions_json TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS focus_feedback_logs (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                todo_id TEXT NOT NULL,
+                session_id TEXT,
+                completed_text TEXT NOT NULL,
+                issue_text TEXT NOT NULL DEFAULT '',
+                risk_text TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            );
             ",
         )
-        .map_err(to_string)
+        .map_err(to_string)?;
+    migrate_settings_schema(connection)?;
+    migrate_todos_schema(connection)?;
+    Ok(())
 }
 
 fn ensure_settings(connection: &Connection) -> AppResult<()> {
@@ -523,11 +767,73 @@ fn ensure_settings(connection: &Connection) -> AppResult<()> {
             "INSERT OR IGNORE INTO settings (
                 id, focus_minutes, short_break_minutes, long_break_minutes, long_break_interval,
                 auto_start_breaks, auto_start_focus, notifications_enabled, minimize_to_tray,
-                launch_on_startup, sound_enabled
-             ) VALUES (1, 25, 5, 15, 4, 1, 0, 1, 1, 0, 1)",
+                launch_on_startup, sound_enabled, ai_base_url, ai_api_key, ai_model_id
+             ) VALUES (1, 25, 5, 15, 4, 1, 0, 1, 1, 0, 1, '', '', '')",
             [],
         )
         .map_err(to_string)?;
+    Ok(())
+}
+
+fn migrate_settings_schema(connection: &Connection) -> AppResult<()> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(settings)")
+        .map_err(to_string)?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(to_string)?
+        .collect::<Result<HashSet<_>, _>>()
+        .map_err(to_string)?;
+
+    add_settings_column_if_missing(connection, &columns, "ai_base_url", "TEXT NOT NULL DEFAULT ''")?;
+    add_settings_column_if_missing(connection, &columns, "ai_api_key", "TEXT NOT NULL DEFAULT ''")?;
+    add_settings_column_if_missing(connection, &columns, "ai_model_id", "TEXT NOT NULL DEFAULT ''")?;
+
+    Ok(())
+}
+
+fn migrate_todos_schema(connection: &Connection) -> AppResult<()> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(todos)")
+        .map_err(to_string)?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(to_string)?
+        .collect::<Result<HashSet<_>, _>>()
+        .map_err(to_string)?;
+
+    add_column_if_missing(connection, &columns, "todos", "quick_start_step", "TEXT NOT NULL DEFAULT ''")?;
+
+    Ok(())
+}
+
+fn add_settings_column_if_missing(
+    connection: &Connection,
+    columns: &HashSet<String>,
+    column_name: &str,
+    definition: &str,
+) -> AppResult<()> {
+    add_column_if_missing(connection, columns, "settings", column_name, definition)
+}
+
+fn add_column_if_missing(
+    connection: &Connection,
+    columns: &HashSet<String>,
+    table_name: &str,
+    column_name: &str,
+    definition: &str,
+) -> AppResult<()> {
+    if columns.contains(column_name) {
+        return Ok(());
+    }
+
+    connection
+        .execute(
+            &format!("ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}"),
+            [],
+        )
+        .map_err(to_string)?;
+
     Ok(())
 }
 
@@ -570,13 +876,14 @@ fn seed_if_empty(connection: &Connection) -> AppResult<()> {
     connection
         .execute(
             "INSERT INTO todos (
-                id, project_id, title, description, notes, status, priority,
+                id, project_id, title, quick_start_step, description, notes, status, priority,
                 estimated_pomodoros, completed_pomodoros, due_date, is_today, created_at, completed_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 4, 2, ?8, 1, ?9, NULL)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 4, 2, ?9, 1, ?10, NULL)",
             params![
                 reading_todo_id,
                 study_project_id,
                 "真题阅读 2 套",
+                "先完成第一套真题的阅读部分。",
                 "按题型拆解错题，记录生词。",
                 "结束后整理高频词到单词本。",
                 "in_progress",
@@ -589,13 +896,14 @@ fn seed_if_empty(connection: &Connection) -> AppResult<()> {
     connection
         .execute(
             "INSERT INTO todos (
-                id, project_id, title, description, notes, status, priority,
+                id, project_id, title, quick_start_step, description, notes, status, priority,
                 estimated_pomodoros, completed_pomodoros, due_date, is_today, created_at, completed_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 3, 0, ?8, 1, ?9, NULL)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 3, 0, ?9, 1, ?10, NULL)",
             params![
                 prototype_todo_id,
                 product_project_id,
                 "整理桌面端信息架构",
+                "先盘点当前桌面端的页面入口。",
                 "把导航、卡片和统计逻辑统一。",
                 "优先确定执行页的信息密度。",
                 "todo",
@@ -608,13 +916,14 @@ fn seed_if_empty(connection: &Connection) -> AppResult<()> {
     connection
         .execute(
             "INSERT INTO todos (
-                id, project_id, title, description, notes, status, priority,
+                id, project_id, title, quick_start_step, description, notes, status, priority,
                 estimated_pomodoros, completed_pomodoros, due_date, is_today, created_at, completed_at
-             ) VALUES (?1, ?2, ?3, ?4, '', ?5, ?6, 2, 0, ?7, 0, ?8, NULL)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, '', ?6, ?7, 2, 0, ?8, 0, ?9, NULL)",
             params![
                 metric_todo_id,
                 product_project_id,
                 "补统计页图表文案",
+                "先列出现有图表和对应空白文案。",
                 "把趋势图和项目占比的文案补齐。",
                 "todo",
                 "medium",
@@ -626,13 +935,14 @@ fn seed_if_empty(connection: &Connection) -> AppResult<()> {
     connection
         .execute(
             "INSERT INTO todos (
-                id, project_id, title, description, notes, status, priority,
+                id, project_id, title, quick_start_step, description, notes, status, priority,
                 estimated_pomodoros, completed_pomodoros, due_date, is_today, created_at, completed_at
-             ) VALUES (?1, ?2, ?3, ?4, '', ?5, ?6, 2, 0, NULL, 0, ?7, NULL)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, '', ?6, ?7, 2, 0, NULL, 0, ?8, NULL)",
             params![
                 walk_todo_id,
                 health_project_id,
                 "轻量跑步 30 分钟",
+                "先完成 3 分钟热身。",
                 "恢复心肺，不追配速。",
                 "todo",
                 "low",

@@ -1,13 +1,24 @@
+mod ai;
 mod db;
 mod models;
 
+use ai::{
+    generate_ai_review as generate_ai_review_service,
+    generate_focus_continuation as generate_focus_continuation_service,
+    generate_todo_activation_relief as generate_todo_activation_relief_service,
+    generate_todo_ai_suggestions as generate_todo_ai_suggestions_service,
+};
 use db::{
     archive_project as archive_project_db, delete_project as delete_project_db, delete_todo as delete_todo_db, init_database,
-    load_settings, load_snapshot as load_snapshot_db, record_focus_session as record_focus_session_db,
-    save_project as save_project_db, save_settings as save_settings_db, save_todo as save_todo_db,
-    should_minimize_to_tray,
+    load_ai_reviews as load_ai_reviews_db, load_settings, load_snapshot as load_snapshot_db,
+    record_focus_session as record_focus_session_db, save_ai_review as save_ai_review_db,
+    save_project as save_project_db, save_settings as save_settings_db, save_todo as save_todo_db, should_minimize_to_tray,
 };
-use models::{AppSettings, AppSnapshot, FocusSessionDraft, ProjectDraft, TodoDraft};
+use models::{
+    AiReviewRecord, AiReviewRecordDraft, AiReviewSummary, AppSettings, AppSnapshot,
+    FocusContinuationSuggestion, FocusFeedbackDraft, FocusSessionDraft, ProjectDraft,
+    TodoActivationRelief, TodoActivationReliefRequest, TodoAiSuggestion, TodoDraft,
+};
 use tauri::{
     menu::MenuBuilder,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -86,6 +97,49 @@ fn show_main_window(app: AppHandle) -> AppResult<()> {
     reveal_main_window(&app)
 }
 
+#[tauri::command]
+async fn generate_todo_ai_suggestions(
+    app: AppHandle,
+    project_id: String,
+    todo_ids: Vec<String>,
+) -> AppResult<Vec<TodoAiSuggestion>> {
+    generate_todo_ai_suggestions_service(&app, &project_id, &todo_ids).await
+}
+
+#[tauri::command]
+async fn generate_todo_activation_relief(
+    app: AppHandle,
+    request: TodoActivationReliefRequest,
+) -> AppResult<TodoActivationRelief> {
+    generate_todo_activation_relief_service(&app, request).await
+}
+
+#[tauri::command]
+async fn generate_focus_continuation(
+    app: AppHandle,
+    feedback: FocusFeedbackDraft,
+) -> AppResult<FocusContinuationSuggestion> {
+    generate_focus_continuation_service(&app, feedback).await
+}
+
+#[tauri::command]
+async fn generate_ai_review(
+    app: AppHandle,
+    project_id: Option<String>,
+) -> AppResult<AiReviewSummary> {
+    generate_ai_review_service(&app, project_id.as_deref()).await
+}
+
+#[tauri::command]
+fn load_ai_reviews(app: AppHandle) -> AppResult<Vec<AiReviewRecord>> {
+    load_ai_reviews_db(&app)
+}
+
+#[tauri::command]
+fn save_ai_review(app: AppHandle, review: AiReviewRecordDraft) -> AppResult<AiReviewRecord> {
+    save_ai_review_db(&app, review)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
@@ -108,7 +162,13 @@ pub fn run() {
             record_focus_session,
             notify_phase,
             update_tray_status,
-            show_main_window
+            show_main_window,
+            generate_todo_ai_suggestions,
+            generate_todo_activation_relief,
+            generate_focus_continuation,
+            generate_ai_review,
+            load_ai_reviews,
+            save_ai_review
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

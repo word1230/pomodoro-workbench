@@ -1,7 +1,21 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow, UserAttentionType } from '@tauri-apps/api/window'
-import type { AppSettings, AppSnapshot, FocusSessionDraft, ProjectDraft, TodoDraft } from '../types'
+import type {
+  AiReviewRecord,
+  AiReviewRecordDraft,
+  AiReviewSummary,
+  AppSettings,
+  AppSnapshot,
+  FocusContinuationSuggestion,
+  FocusFeedbackDraft,
+  FocusSessionDraft,
+  ProjectDraft,
+  TodoActivationRelief,
+  TodoActivationReliefRequest,
+  TodoAiSuggestion,
+  TodoDraft,
+} from '../types'
 
 declare global {
   interface Window {
@@ -109,6 +123,7 @@ export async function saveTodo(todo: TodoDraft): Promise<AppSnapshot> {
       id: crypto.randomUUID(),
       projectId: todo.projectId,
       title: todo.title,
+      quickStartStep: todo.quickStartStep,
       description: todo.description,
       notes: todo.notes,
       status: todo.status,
@@ -140,6 +155,61 @@ export async function saveSettings(settings: AppSettings): Promise<AppSnapshot> 
   const snapshot = readSnapshot()
   snapshot.settings = settings
   return writeSnapshot(snapshot)
+}
+
+export async function generateTodoAiSuggestions(
+  projectId: string,
+  todoIds: string[],
+): Promise<TodoAiSuggestion[]> {
+  if (isTauriEnvironment()) {
+    return invoke<TodoAiSuggestion[]>('generate_todo_ai_suggestions', { projectId, todoIds })
+  }
+
+  throw new Error('AI 批量增强仅支持 Tauri 桌面端，请在桌面应用中使用。')
+}
+
+export async function generateAiReview(projectId: string | null): Promise<AiReviewSummary> {
+  if (isTauriEnvironment()) {
+    return invoke<AiReviewSummary>('generate_ai_review', { projectId })
+  }
+
+  throw new Error('AI 复盘仅支持 Tauri 桌面端，请在桌面应用中使用。')
+}
+
+export async function generateTodoActivationRelief(
+  request: TodoActivationReliefRequest,
+): Promise<TodoActivationRelief> {
+  if (isTauriEnvironment()) {
+    return invoke<TodoActivationRelief>('generate_todo_activation_relief', { request })
+  }
+
+  throw new Error('AI 解阻仅支持 Tauri 桌面端，请在桌面应用中使用。')
+}
+
+export async function generateFocusContinuation(
+  feedback: FocusFeedbackDraft,
+): Promise<FocusContinuationSuggestion> {
+  if (isTauriEnvironment()) {
+    return invoke<FocusContinuationSuggestion>('generate_focus_continuation', { feedback })
+  }
+
+  throw new Error('AI 推进建议仅支持 Tauri 桌面端，请在桌面应用中使用。')
+}
+
+export async function loadAiReviews(): Promise<AiReviewRecord[]> {
+  if (isTauriEnvironment()) {
+    return invoke<AiReviewRecord[]>('load_ai_reviews')
+  }
+
+  return []
+}
+
+export async function saveAiReview(review: AiReviewRecordDraft): Promise<AiReviewRecord> {
+  if (isTauriEnvironment()) {
+    return invoke<AiReviewRecord>('save_ai_review', { review })
+  }
+
+  throw new Error('AI 复盘历史仅支持 Tauri 桌面端，请在桌面应用中使用。')
 }
 
 export async function recordFocusSession(session: FocusSessionDraft): Promise<AppSnapshot> {
@@ -307,6 +377,9 @@ function buildSeedSnapshot(): AppSnapshot {
     minimizeToTray: true,
     launchOnStartup: false,
     soundEnabled: true,
+    aiBaseUrl: '',
+    aiApiKey: '',
+    aiModelId: '',
   }
 
   const projects = [
@@ -344,6 +417,7 @@ function buildSeedSnapshot(): AppSnapshot {
       id: todoReadingId,
       projectId: projectStudyId,
       title: '真题阅读 2 套',
+      quickStartStep: '先打开第一套真题并标出阅读题。',
       description: '按题型拆解错题，记录生词。',
       notes: '结束后整理高频词到单词本。',
       status: 'in_progress',
@@ -359,6 +433,7 @@ function buildSeedSnapshot(): AppSnapshot {
       id: todoPrototypeId,
       projectId: projectProductId,
       title: '整理桌面端信息架构',
+      quickStartStep: '先列出当前所有页面和入口。',
       description: '把导航、卡片和统计逻辑统一。',
       notes: '优先确定执行页信息密度。',
       status: 'todo',
@@ -374,6 +449,7 @@ function buildSeedSnapshot(): AppSnapshot {
       id: todoReviewId,
       projectId: projectProductId,
       title: '补统计页图表文案',
+      quickStartStep: '先把现有图表标题逐个列出来。',
       description: '把趋势图和项目占比的文案补齐。',
       notes: '',
       status: 'todo',
@@ -389,6 +465,7 @@ function buildSeedSnapshot(): AppSnapshot {
       id: todoRunId,
       projectId: projectHealthId,
       title: '轻量跑步 30 分钟',
+      quickStartStep: '先换好跑鞋并做 3 分钟热身。',
       description: '恢复心肺，不追配速。',
       notes: '',
       status: 'todo',
