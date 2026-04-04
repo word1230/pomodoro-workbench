@@ -215,6 +215,7 @@ function App() {
   const [launchManageOpen, setLaunchManageOpen] = useState(false)
   const [launchDetailsOpen, setLaunchDetailsOpen] = useState(false)
   const [launchMoreOpen, setLaunchMoreOpen] = useState(false)
+  const [todoContextOpen, setTodoContextOpen] = useState(false)
   const focusFeedbackCardRef = useRef<HTMLDivElement | null>(null)
   const [projectForm, setProjectForm] = useState<ProjectDraft>({
     name: '',
@@ -467,7 +468,6 @@ function App() {
   const selectedTodoCurrentStep = selectedTodo
     ? getCurrentTodoStep(selectedTodo) || '还没有最简启动步骤'
     : '还没有最简启动步骤'
-  const selectedTodoUpcomingSteps = selectedTodoSteps.slice(selectedTodoCurrentStepIndex + 1, selectedTodoCurrentStepIndex + 3)
   const hasLaunchContextSteps = selectedTodoSteps.length > 0
   const launchContextFallback =
     selectedTodoCurrentStep || '还没有补充后续步骤，先完成这一轮，再补详细推进路径。'
@@ -1172,6 +1172,8 @@ function App() {
   const openTodoEditor = (todo?: Todo) => {
     setTodoEditorMode(todo ? 'edit' : 'create')
     if (todo) {
+      const resolvedSteps = getResolvedTodoSteps(todo)
+      setTodoContextOpen(Boolean(todo.description.trim()))
       setTodoForm(
         normalizeTodoDraft({
           id: todo.id,
@@ -1185,11 +1187,12 @@ function App() {
           estimatedPomodoros: todo.estimatedPomodoros,
           dueDate: todo.dueDate,
           isToday: todo.isToday,
-          steps: getResolvedTodoSteps(todo),
+          steps: resolvedSteps,
           currentStepIndex: todo.currentStepIndex,
         }),
       )
     } else {
+      setTodoContextOpen(false)
       setTodoForm(
         normalizeTodoDraft({
           projectId: manageProject?.id ?? projects[0]?.id ?? '',
@@ -1259,7 +1262,12 @@ function App() {
     if (!nextDraft.id) {
       setSelectedTodoId(next.todos[0]?.id ?? null)
     }
+    closeTodoEditor()
+  }
+
+  const closeTodoEditor = () => {
     setTodoEditorOpen(false)
+    setTodoContextOpen(false)
   }
 
   const handleDeleteTodo = async (todoId: string) => {
@@ -1268,7 +1276,7 @@ function App() {
       setSelectedTodoId(null)
     }
     if (todoForm.id === todoId) {
-      setTodoEditorOpen(false)
+      closeTodoEditor()
     }
   }
 
@@ -1848,15 +1856,24 @@ function App() {
                         </div>
 
                         <article className="focus-kickoff__card focus-kickoff__card--primary">
-                          <span>当前下一步</span>
+                          <div className="focus-kickoff__card-topline">
+                            <span>下一步</span>
+                            {selectedTodoSteps.length ? (
+                              <small>
+                                第 {Math.min(selectedTodoCurrentStepIndex + 1, selectedTodoSteps.length)} / {selectedTodoSteps.length} 步
+                              </small>
+                            ) : (
+                              <small>先开始</small>
+                            )}
+                          </div>
                           <strong>{selectedTodoCurrentStep}</strong>
-                          {selectedTodoUpcomingSteps.length ? (
-                            <p>接下来：{selectedTodoUpcomingSteps.join(' · ')}</p>
-                          ) : selectedTodoSteps.length > 1 ? (
-                            <p>这是当前任务的最后一步，完成后就可以收尾或复盘了。</p>
-                          ) : (
-                            <p>还没有拆出更多步骤，先开始这一轮，结束后再补后续推进也可以。</p>
-                          )}
+                          <p>
+                            {selectedTodoSteps.length > 1
+                              ? selectedTodoCurrentStepIndex >= selectedTodoSteps.length - 1
+                                ? '做完这一步就可以收尾。'
+                                : '先只做这一件事。'
+                              : '先从这个最小动作开始。'}
+                          </p>
                         </article>
 
                         <div className="focus-kickoff__primary-actions">
@@ -1927,7 +1944,7 @@ function App() {
                             onClick={() => setLaunchMoreOpen(true)}
                             aria-expanded={launchMoreOpen}
                           >
-                            打开更多选项
+                            更多选项
                           </button>
                         </div>
 
@@ -1941,405 +1958,396 @@ function App() {
                           onClose={closeLaunchMorePanel}
                         >
                           <div className="launch-more-panel">
-                            <div className="focus-kickoff__section-head launch-more-panel__intro">
-                              <div className="focus-kickoff__section-copy">
-                                <span className="eyebrow">更多选项</span>
-                                <h4>只在需要时再展开</h4>
-                              </div>
-                              <p>把步骤管理、计划番茄、卡住求助和复盘都收进这里。</p>
-                            </div>
-
-                            <article className="focus-kickoff__utility-row">
-                              <div className="focus-kickoff__utility-copy">
-                                <span className="eyebrow">步骤管理</span>
-                                <h4>{launchManageOpen ? '步骤管理已展开' : '编辑步骤与番茄'}</h4>
-                                <p>需要时再展开，避免抽屉一打开就堆满按钮和输入框。</p>
-                              </div>
-                              <div className="focus-kickoff__utility-actions focus-kickoff__utility-actions--step-management">
-                                <button
-                                  type="button"
-                                  className={
-                                    launchManageOpen
-                                      ? 'action-button action-button--compact'
-                                      : 'action-button action-button--compact action-button--primary'
-                                  }
-                                  onClick={() => setLaunchManageOpen((current) => !current)}
-                                  aria-expanded={launchManageOpen}
-                                >
-                                  {launchManageOpen ? '收起管理' : '打开管理'}
-                                </button>
-                              </div>
-                            </article>
-
-                            {launchManageOpen ? (
-                              <div className="focus-kickoff__utility-detail focus-kickoff__utility-detail--stacked">
-                                <article className="focus-kickoff__utility-row focus-kickoff__utility-row--nested">
-                                  <div className="focus-kickoff__utility-copy">
-                                    <span className="eyebrow">步骤操作</span>
-                                    <h4>回退或进入编辑</h4>
-                                  </div>
-                                  <div className="focus-kickoff__utility-actions focus-kickoff__utility-actions--step-management">
-                                    <button
-                                      type="button"
-                                      className="action-button action-button--compact action-button--ghost"
-                                      onClick={() => void handleRewindTodoStep()}
-                                      disabled={!selectedTodoSteps.length || selectedTodoCurrentStepIndex === 0}
-                                    >
-                                      回退一步
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="action-button action-button--compact"
-                                      onClick={() => {
-                                        closeLaunchMorePanel()
-                                        openTodoEditor(selectedTodo)
-                                      }}
-                                      disabled={!selectedTodo}
-                                    >
-                                      编辑步骤
-                                    </button>
-                                  </div>
-                                </article>
-
-                                <article className="focus-kickoff__utility-row focus-kickoff__utility-row--nested">
-                                  <div className="focus-kickoff__utility-copy">
-                                    <span className="eyebrow">计划番茄数</span>
-                                    <h4>计划番茄</h4>
-                                  </div>
-                                  <label className="focus-kickoff__plan-field">
-                                    <input
-                                      type="number"
-                                      min={1}
-                                      max={20}
-                                      value={plannedPomodoros}
-                                      disabled={focusInteractionLocked}
-                                      onChange={(event) =>
-                                        setPlannedPomodoros(Math.max(1, Math.min(20, Number(event.target.value) || 1)))
-                                      }
-                                      onBlur={() => void handlePlannedPomodorosSave()}
-                                    />
-                                    <small>个番茄</small>
-                                  </label>
-                                </article>
-                              </div>
-                            ) : null}
-
-                            <article className="focus-kickoff__utility-row">
-                              <div className="focus-kickoff__utility-copy">
-                                <span className="eyebrow">卡住时</span>
-                                <h4>{activationAssistOpen || todoActivationRelief ? 'AI 求助已展开' : '卡住时再求助'}</h4>
-                                <p>
-                                  {activationAssistOpen || todoActivationRelief
-                                    ? '先选原因，再决定是否应用这版建议。'
-                                    : '默认收起，只有真的卡住时再回来展开。'}
-                                </p>
-                              </div>
-                              <div className="focus-kickoff__utility-actions">
-                                <button
-                                  type="button"
-                                  className={
-                                    activationAssistOpen || todoActivationRelief
-                                      ? 'action-button action-button--compact'
-                                      : 'action-button action-button--compact action-button--primary'
-                                  }
-                                  onClick={() => {
-                                    if (activationAssistOpen || todoActivationRelief) {
-                                      setActivationAssistOpen(false)
-                                      setTodoActivationRelief(null)
-                                      setActivationReliefHelpful(false)
-                                      return
-                                    }
-                                    setActivationAssistOpen(true)
-                                  }}
-                                  disabled={!selectedTodo || focusInteractionLocked || activationAiGenerating}
-                                  aria-expanded={activationAssistOpen || Boolean(todoActivationRelief)}
-                                >
-                                  {activationAiGenerating
-                                    ? 'AI 生成中...'
-                                    : activationAssistOpen || todoActivationRelief
-                                      ? '收起求助'
-                                      : '打开求助'}
-                                </button>
-                              </div>
-                            </article>
-
-                            {activationAssistOpen ? (
-                              <div className="focus-kickoff__utility-detail">
-                                <div className="focus-kickoff__assist-reasons" role="list" aria-label="卡住原因">
-                                  {activationBlockReasonOptions.map((option) => (
-                                    <button
-                                      key={option.id}
-                                      type="button"
-                                      className={
-                                        option.id === activationBlockReason
-                                          ? 'focus-kickoff__assist-reason is-selected'
-                                          : 'focus-kickoff__assist-reason'
-                                      }
-                                      onClick={() => void handleSelectActivationReason(option.id)}
-                                      disabled={focusInteractionLocked || activationAiGenerating}
-                                    >
-                                      <strong>{option.label}</strong>
-                                      <span>{option.hint}</span>
-                                    </button>
-                                  ))}
+                            <section className="focus-kickoff__section focus-kickoff__section--drawer-group">
+                              <div className="focus-kickoff__section-head">
+                                <div className="focus-kickoff__section-copy">
+                                  <span className="eyebrow">步骤</span>
+                                  <h4>步骤</h4>
                                 </div>
-                              </div>
-                            ) : null}
-
-                            {todoActivationRelief ? (
-                              <article className="focus-relief-card focus-kickoff__section focus-kickoff__section--assist-result">
-                                <div className="focus-relief-card__head">
-                                  <div>
-                                    <span>AI 解阻建议</span>
-                                    <h4>{todoActivationRelief.title}</h4>
-                                  </div>
-                                  <div className="focus-relief-card__head-meta">
-                                    <span className="info-pill">原因：{selectedActivationBlockReason.label}</span>
-                                    <span className="info-pill">先预览，再决定是否应用</span>
-                                  </div>
-                                </div>
-                                <div className="focus-relief-card__grid">
-                                  <section className="focus-relief-card__section">
-                                    <span>当前最简启动步骤</span>
-                                    <p className="focus-relief-card__body">
-                                      {selectedTodo?.quickStartStep || '当前还没有最简启动步骤'}
-                                    </p>
-                                  </section>
-                                  <section className="focus-relief-card__section">
-                                    <span>AI 建议的新起点</span>
-                                    <p className="focus-relief-card__body">{todoActivationRelief.quickStartStep}</p>
-                                  </section>
-                                  <section className="focus-relief-card__section">
-                                    <span>AI 建议的后续推进</span>
-                                    <p className="focus-relief-card__body focus-relief-card__body--steps">
-                                      {todoActivationRelief.updatedDescription}
-                                    </p>
-                                  </section>
-                                  <section className="focus-relief-card__section">
-                                    <span>如果还是卡住</span>
-                                    <p className="focus-relief-card__body">{todoActivationRelief.fallbackStep}</p>
-                                  </section>
-                                </div>
-                                <div className="focus-relief-card__feedback">
-                                  <div className="focus-relief-card__feedback-copy">
-                                    <span>这版建议有帮助吗</span>
-                                    <p>
-                                      {activationReliefHelpful
-                                        ? '已标记这版有帮助，适合直接应用到当前任务。'
-                                        : '如果还不够好，可以继续让 AI 把第一步压得更小，或者换一个切入角度。'}
-                                    </p>
-                                  </div>
-                                  <div className="focus-relief-card__feedback-actions">
-                                    <button
-                                      type="button"
-                                      className={
-                                        activationReliefHelpful
-                                          ? 'action-button action-button--compact action-button--primary'
-                                          : 'action-button action-button--compact'
-                                      }
-                                      onClick={handleMarkActivationReliefHelpful}
-                                    >
-                                      这版有用
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="action-button action-button--compact action-button--ghost"
-                                      onClick={() => void handleGenerateActivationRelief('need_smaller')}
-                                      disabled={activationAiGenerating}
-                                    >
-                                      再细一点
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="action-button action-button--compact action-button--ghost"
-                                      onClick={() => void handleGenerateActivationRelief('need_alternative')}
-                                      disabled={activationAiGenerating}
-                                    >
-                                      换个思路
-                                    </button>
-                                  </div>
-                                </div>
-                                <div className="modal-form__actions">
+                                <div className="focus-kickoff__utility-actions focus-kickoff__utility-actions--step-management">
                                   <button
                                     type="button"
-                                    className="action-button action-button--ghost"
+                                    className={
+                                      launchManageOpen
+                                        ? 'action-button action-button--compact'
+                                        : 'action-button action-button--compact action-button--primary'
+                                    }
+                                    onClick={() => setLaunchManageOpen((current) => !current)}
+                                    aria-expanded={launchManageOpen}
+                                  >
+                                    {launchManageOpen ? '收起' : '展开'}
+                                  </button>
+                                </div>
+                              </div>
+
+                              {launchManageOpen ? (
+                                <div className="focus-kickoff__section-body focus-kickoff__section-body--stacked">
+                                  <article className="focus-kickoff__utility-row focus-kickoff__utility-row--nested">
+                                    <div className="focus-kickoff__utility-copy">
+                                      <h4>编辑</h4>
+                                    </div>
+                                    <div className="focus-kickoff__utility-actions focus-kickoff__utility-actions--step-management">
+                                      <button
+                                        type="button"
+                                        className="action-button action-button--compact action-button--ghost"
+                                        onClick={() => void handleRewindTodoStep()}
+                                        disabled={!selectedTodoSteps.length || selectedTodoCurrentStepIndex === 0}
+                                      >
+                                        回退一步
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="action-button action-button--compact"
+                                        onClick={() => {
+                                          closeLaunchMorePanel()
+                                          openTodoEditor(selectedTodo)
+                                        }}
+                                        disabled={!selectedTodo}
+                                      >
+                                        编辑步骤
+                                      </button>
+                                    </div>
+                                  </article>
+
+                                  <article className="focus-kickoff__utility-row focus-kickoff__utility-row--nested">
+                                    <div className="focus-kickoff__utility-copy">
+                                      <h4>番茄数</h4>
+                                    </div>
+                                    <label className="focus-kickoff__plan-field">
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        max={20}
+                                        value={plannedPomodoros}
+                                        disabled={focusInteractionLocked}
+                                        onChange={(event) =>
+                                          setPlannedPomodoros(Math.max(1, Math.min(20, Number(event.target.value) || 1)))
+                                        }
+                                        onBlur={() => void handlePlannedPomodorosSave()}
+                                      />
+                                      <small>个番茄</small>
+                                    </label>
+                                  </article>
+                                </div>
+                              ) : null}
+                            </section>
+
+                            <section className="focus-kickoff__section focus-kickoff__section--drawer-group">
+                              <div className="focus-kickoff__section-head">
+                                <div className="focus-kickoff__section-copy">
+                                  <span className="eyebrow">卡住</span>
+                                  <h4>AI 求助</h4>
+                                </div>
+                                <div className="focus-kickoff__utility-actions">
+                                  <button
+                                    type="button"
+                                    className={
+                                      activationAssistOpen || todoActivationRelief
+                                        ? 'action-button action-button--compact'
+                                        : 'action-button action-button--compact action-button--primary'
+                                    }
                                     onClick={() => {
-                                      setTodoActivationRelief(null)
-                                      setActivationReliefHelpful(false)
+                                      if (activationAssistOpen || todoActivationRelief) {
+                                        setActivationAssistOpen(false)
+                                        setTodoActivationRelief(null)
+                                        setActivationReliefHelpful(false)
+                                        return
+                                      }
+                                      setActivationAssistOpen(true)
+                                    }}
+                                    disabled={!selectedTodo || focusInteractionLocked || activationAiGenerating}
+                                    aria-expanded={activationAssistOpen || Boolean(todoActivationRelief)}
+                                  >
+                                    {activationAiGenerating
+                                      ? 'AI 生成中...'
+                                      : activationAssistOpen || todoActivationRelief
+                                        ? '收起'
+                                        : '展开'}
+                                  </button>
+                                </div>
+                              </div>
+
+                              {activationAssistOpen || todoActivationRelief ? (
+                                <div className="focus-kickoff__section-body">
+                                  {activationAssistOpen ? (
+                                    <div className="focus-kickoff__utility-detail">
+                                      <div className="focus-kickoff__assist-reasons" role="list" aria-label="卡住原因">
+                                        {activationBlockReasonOptions.map((option) => (
+                                          <button
+                                            key={option.id}
+                                            type="button"
+                                            className={
+                                              option.id === activationBlockReason
+                                                ? 'focus-kickoff__assist-reason is-selected'
+                                                : 'focus-kickoff__assist-reason'
+                                            }
+                                            onClick={() => void handleSelectActivationReason(option.id)}
+                                            disabled={focusInteractionLocked || activationAiGenerating}
+                                          >
+                                            <strong>{option.label}</strong>
+                                            <span>{option.hint}</span>
+                                          </button>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  ) : null}
+
+                                  {todoActivationRelief ? (
+                                    <article className="focus-relief-card focus-kickoff__section focus-kickoff__section--assist-result">
+                                      <div className="focus-relief-card__head">
+                                        <div>
+                                          <span>AI 解阻建议</span>
+                                          <h4>{todoActivationRelief.title}</h4>
+                                        </div>
+                                        <div className="focus-relief-card__head-meta">
+                                          <span className="info-pill">原因：{selectedActivationBlockReason.label}</span>
+                                          <span className="info-pill">先预览，再决定是否应用</span>
+                                        </div>
+                                      </div>
+                                      <div className="focus-relief-card__grid">
+                                        <section className="focus-relief-card__section">
+                                          <span>当前最简启动步骤</span>
+                                          <p className="focus-relief-card__body">
+                                            {selectedTodo?.quickStartStep || '当前还没有最简启动步骤'}
+                                          </p>
+                                        </section>
+                                        <section className="focus-relief-card__section">
+                                          <span>AI 建议的新起点</span>
+                                          <p className="focus-relief-card__body">{todoActivationRelief.quickStartStep}</p>
+                                        </section>
+                                        <section className="focus-relief-card__section">
+                                          <span>AI 建议的后续推进</span>
+                                          <p className="focus-relief-card__body focus-relief-card__body--steps">
+                                            {todoActivationRelief.updatedDescription}
+                                          </p>
+                                        </section>
+                                        <section className="focus-relief-card__section">
+                                          <span>如果还是卡住</span>
+                                          <p className="focus-relief-card__body">{todoActivationRelief.fallbackStep}</p>
+                                        </section>
+                                      </div>
+                                      <div className="focus-relief-card__feedback">
+                                        <div className="focus-relief-card__feedback-copy">
+                                          <span>这版建议有帮助吗</span>
+                                          <p>
+                                            {activationReliefHelpful
+                                              ? '已标记这版有帮助，适合直接应用到当前任务。'
+                                              : '如果还不够好，可以继续让 AI 把第一步压得更小，或者换一个切入角度。'}
+                                          </p>
+                                        </div>
+                                        <div className="focus-relief-card__feedback-actions">
+                                          <button
+                                            type="button"
+                                            className={
+                                              activationReliefHelpful
+                                                ? 'action-button action-button--compact action-button--primary'
+                                                : 'action-button action-button--compact'
+                                            }
+                                            onClick={handleMarkActivationReliefHelpful}
+                                          >
+                                            这版有用
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="action-button action-button--compact action-button--ghost"
+                                            onClick={() => void handleGenerateActivationRelief('need_smaller')}
+                                            disabled={activationAiGenerating}
+                                          >
+                                            再细一点
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="action-button action-button--compact action-button--ghost"
+                                            onClick={() => void handleGenerateActivationRelief('need_alternative')}
+                                            disabled={activationAiGenerating}
+                                          >
+                                            换个思路
+                                          </button>
+                                        </div>
+                                      </div>
+                                      <div className="modal-form__actions">
+                                        <button
+                                          type="button"
+                                          className="action-button action-button--ghost"
+                                          onClick={() => {
+                                            setTodoActivationRelief(null)
+                                            setActivationReliefHelpful(false)
+                                          }}
+                                        >
+                                          取消
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="action-button action-button--primary"
+                                          onClick={() => void handleApplyActivationRelief()}
+                                        >
+                                          {activationReliefHelpful ? '应用这版建议' : '应用到当前任务'}
+                                        </button>
+                                      </div>
+                                    </article>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                            </section>
+
+                            <section className="focus-kickoff__section focus-kickoff__section--drawer-group">
+                              <div className="focus-kickoff__section-head">
+                                <div className="focus-kickoff__section-copy">
+                                  <span className="eyebrow">复盘</span>
+                                  <h4>复盘</h4>
+                                </div>
+                                <div className="focus-kickoff__utility-actions">
+                                  <button
+                                    type="button"
+                                    className={
+                                      focusFeedbackOpen
+                                        ? 'action-button action-button--compact'
+                                        : 'action-button action-button--compact action-button--primary'
+                                    }
+                                    onClick={() => {
+                                      setFocusFeedbackOpen((current) => !current)
+                                      setFocusFeedbackCollapsed(false)
                                     }}
                                   >
-                                    取消
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="action-button action-button--primary"
-                                    onClick={() => void handleApplyActivationRelief()}
-                                  >
-                                    {activationReliefHelpful ? '应用这版建议' : '应用到当前任务'}
-                                  </button>
-                                </div>
-                              </article>
-                            ) : null}
-
-                            <article className="focus-kickoff__utility-row focus-kickoff__utility-row--review">
-                              <div className="focus-kickoff__utility-copy">
-                                <span className="eyebrow">结束后复盘</span>
-                                <h4>{focusFeedbackOpen ? '复盘 / 续写已展开' : '结束后复盘'}</h4>
-                                <p>{focusFeedbackOpen ? '先补三栏，再决定要不要生成 AI 续写。' : '默认收起，需要时再展开完整复盘和 AI 续写。'}</p>
-                              </div>
-                              <div className="focus-kickoff__utility-actions">
-                                <button
-                                  type="button"
-                                  className={
-                                    focusFeedbackOpen
-                                      ? 'action-button action-button--compact'
-                                      : 'action-button action-button--compact action-button--primary'
-                                  }
-                                  onClick={() => {
-                                    setFocusFeedbackOpen((current) => !current)
-                                    setFocusFeedbackCollapsed(false)
-                                  }}
-                                >
-                                  {focusFeedbackOpen ? '收起复盘' : '打开复盘'}
-                                </button>
-                              </div>
-                            </article>
-
-                            {focusFeedbackOpen ? (
-                          <article className="focus-feedback-card focus-feedback-card--drawer" ref={focusFeedbackCardRef}>
-                            <div className="focus-feedback-card__head">
-                              <div className="focus-feedback-card__intro">
-                                <span>番茄结束复盘</span>
-                                <h4>AI 后续推进</h4>
-                                <p>先写下完成、卡点和风险，再生成下一轮的最简续推进建议。</p>
-                              </div>
-                              <div className="focus-feedback-card__meta">
-                                <button
-                                  type="button"
-                                  className="focus-feedback-card__toggle"
-                                  onClick={() => setFocusFeedbackCollapsed((current) => !current)}
-                                  aria-expanded={!focusFeedbackCollapsed}
-                                >
-                                  {focusFeedbackCollapsed
-                                    ? `展开输入区（${focusFeedbackFilledCount}/3）`
-                                    : '收起输入区'}
-                                </button>
-                                <button
-                                  type="button"
-                                  className="action-button action-button--compact action-button--ghost"
-                                  onClick={() => setFocusFeedbackOpen(false)}
-                                >
-                                  关闭复盘
-                                </button>
-                              </div>
-                            </div>
-
-                            {!focusFeedbackCollapsed ? (
-                              <>
-                                <div className="focus-feedback-grid">
-                                  <label className="field">
-                                    <span>本轮已完成内容</span>
-                                    <textarea
-                                      rows={2}
-                                      value={focusFeedbackDraft?.completedText ?? ''}
-                                      placeholder="例如：整理了统计页结构，完成了趋势图字段映射"
-                                      onChange={(event) =>
-                                        handleFocusFeedbackFieldChange('completedText', event.target.value)
-                                      }
-                                    ></textarea>
-                                  </label>
-                                  <label className="field">
-                                    <span>遇到的问题</span>
-                                    <textarea
-                                      rows={2}
-                                      value={focusFeedbackDraft?.issueText ?? ''}
-                                      placeholder="例如：图表文案仍不统一，难以快速收敛"
-                                      onChange={(event) =>
-                                        handleFocusFeedbackFieldChange('issueText', event.target.value)
-                                      }
-                                    ></textarea>
-                                  </label>
-                                  <label className="field">
-                                    <span>下一轮风险</span>
-                                    <textarea
-                                      rows={2}
-                                      value={focusFeedbackDraft?.riskText ?? ''}
-                                      placeholder="例如：可能被临时需求打断，优先级容易漂移"
-                                      onChange={(event) =>
-                                        handleFocusFeedbackFieldChange('riskText', event.target.value)
-                                      }
-                                    ></textarea>
-                                  </label>
-                                </div>
-
-                                <div className="focus-feedback-card__actions">
-                                  <p className="focus-feedback-card__hint">
-                                    {focusContinuationDisabledReason ?? '填写后生成下一轮的最简启动与推进步骤'}
-                                  </p>
-                                  <div className="modal-form__actions">
-                                    <button
-                                      type="button"
-                                      className="action-button action-button--ghost"
-                                      onClick={handleResetFocusFeedback}
-                                      disabled={focusContinuationGenerating}
-                                    >
-                                      清空
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="action-button action-button--primary"
-                                      onClick={() => void handleGenerateFocusContinuation()}
-                                      disabled={Boolean(focusContinuationDisabledReason)}
-                                    >
-                                      {focusContinuationGenerating ? 'AI 生成中...' : '生成后续推进'}
-                                    </button>
-                                  </div>
-                                </div>
-                              </>
-                            ) : (
-                              <div className="focus-feedback-card__collapsed">
-                                <span className="info-pill">已填写 {focusFeedbackFilledCount}/3 项</span>
-                                <p>先把这组三栏输入收起来，等这一轮真的要复盘时再展开补充。</p>
-                              </div>
-                            )}
-
-                            {focusContinuationSuggestion ? (
-                              <div className="focus-continuation-card">
-                                <section className="focus-continuation-card__section">
-                                  <span>最简启动步骤</span>
-                                  <textarea
-                                    rows={2}
-                                    value={focusContinuationQuickStartDraft}
-                                    onChange={(event) => setFocusContinuationQuickStartDraft(event.target.value)}
-                                    placeholder="先确认这一轮最容易开始的动作"
-                                  ></textarea>
-                                </section>
-                                <section className="focus-continuation-card__section">
-                                  <span>后续推进步骤</span>
-                                  <textarea
-                                    rows={Math.max(3, focusContinuationDraft.length || 3)}
-                                    value={focusContinuationDraft.join('\n')}
-                                    onChange={(event) => setFocusContinuationDraft(parseTodoSteps(event.target.value))}
-                                    placeholder="一行一步，先改成你认可的版本再应用"
-                                  ></textarea>
-                                </section>
-                                <section className="focus-continuation-card__section">
-                                  <span>再次卡住时</span>
-                                  <p>{focusContinuationSuggestion.fallbackStep}</p>
-                                </section>
-                                <div className="focus-kickoff__step-actions focus-kickoff__step-actions--continuation">
-                                  <button
-                                    type="button"
-                                    className="action-button action-button--compact"
-                                    onClick={() => void handleUseContinuationAsSteps()}
-                                  >
-                                    写回任务
+                                    {focusFeedbackOpen ? '收起' : '展开'}
                                   </button>
                                 </div>
                               </div>
-                            ) : null}
-                              </article>
-                            ) : null}
+
+                              {focusFeedbackOpen ? (
+                                <div className="focus-kickoff__section-body">
+                                  <article className="focus-feedback-card focus-feedback-card--drawer" ref={focusFeedbackCardRef}>
+                                    <div className="focus-feedback-card__head">
+                                      <div className="focus-feedback-card__intro">
+                                        <span>复盘</span>
+                                        <h4>AI 续写</h4>
+                                      </div>
+                                      <div className="focus-feedback-card__meta">
+                                        <button
+                                          type="button"
+                                          className="focus-feedback-card__toggle"
+                                          onClick={() => setFocusFeedbackCollapsed((current) => !current)}
+                                          aria-expanded={!focusFeedbackCollapsed}
+                                        >
+                                          {focusFeedbackCollapsed
+                                            ? `展开输入（${focusFeedbackFilledCount}/3）`
+                                            : '收起输入'}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="action-button action-button--compact action-button--ghost"
+                                          onClick={() => setFocusFeedbackOpen(false)}
+                                        >
+                                          关闭复盘
+                                        </button>
+                                      </div>
+                                    </div>
+
+                                    {!focusFeedbackCollapsed ? (
+                                      <>
+                                        <div className="focus-feedback-grid">
+                                          <label className="field">
+                                            <span>已完成</span>
+                                            <textarea
+                                              rows={2}
+                                              value={focusFeedbackDraft?.completedText ?? ''}
+                                              placeholder="已完成"
+                                              onChange={(event) =>
+                                                handleFocusFeedbackFieldChange('completedText', event.target.value)
+                                              }
+                                            ></textarea>
+                                          </label>
+                                          <label className="field">
+                                            <span>问题</span>
+                                            <textarea
+                                              rows={2}
+                                              value={focusFeedbackDraft?.issueText ?? ''}
+                                              placeholder="问题"
+                                              onChange={(event) =>
+                                                handleFocusFeedbackFieldChange('issueText', event.target.value)
+                                              }
+                                            ></textarea>
+                                          </label>
+                                          <label className="field">
+                                            <span>风险</span>
+                                            <textarea
+                                              rows={2}
+                                              value={focusFeedbackDraft?.riskText ?? ''}
+                                              placeholder="风险"
+                                              onChange={(event) =>
+                                                handleFocusFeedbackFieldChange('riskText', event.target.value)
+                                              }
+                                            ></textarea>
+                                          </label>
+                                        </div>
+
+                                        <div className="focus-feedback-card__actions">
+                                          <p className="focus-feedback-card__hint">{focusContinuationDisabledReason ?? '生成下一步'}</p>
+                                          <div className="modal-form__actions">
+                                            <button
+                                              type="button"
+                                              className="action-button action-button--ghost"
+                                              onClick={handleResetFocusFeedback}
+                                              disabled={focusContinuationGenerating}
+                                            >
+                                              清空
+                                            </button>
+                                            <button
+                                              type="button"
+                                              className="action-button action-button--primary"
+                                              onClick={() => void handleGenerateFocusContinuation()}
+                                              disabled={Boolean(focusContinuationDisabledReason)}
+                                            >
+                                              {focusContinuationGenerating ? 'AI 生成中...' : '生成下一步'}
+                                            </button>
+                                          </div>
+                                        </div>
+                                      </>
+                                    ) : (
+                                      <div className="focus-feedback-card__collapsed">
+                                        <span className="info-pill">已填写 {focusFeedbackFilledCount}/3</span>
+                                      </div>
+                                    )}
+
+                                    {focusContinuationSuggestion ? (
+                                      <div className="focus-continuation-card">
+                                        <section className="focus-continuation-card__section">
+                                          <span>最简启动</span>
+                                          <textarea
+                                            rows={2}
+                                            value={focusContinuationQuickStartDraft}
+                                            onChange={(event) => setFocusContinuationQuickStartDraft(event.target.value)}
+                                            placeholder="最简启动"
+                                          ></textarea>
+                                        </section>
+                                        <section className="focus-continuation-card__section">
+                                          <span>步骤</span>
+                                          <textarea
+                                            rows={Math.max(3, focusContinuationDraft.length || 3)}
+                                            value={focusContinuationDraft.join('\n')}
+                                            onChange={(event) => setFocusContinuationDraft(parseTodoSteps(event.target.value))}
+                                            placeholder="每行一步"
+                                          ></textarea>
+                                        </section>
+                                        <section className="focus-continuation-card__section">
+                                          <span>再次卡住时</span>
+                                          <p>{focusContinuationSuggestion.fallbackStep}</p>
+                                        </section>
+                                        <div className="focus-kickoff__step-actions focus-kickoff__step-actions--continuation">
+                                          <button
+                                            type="button"
+                                            className="action-button action-button--compact"
+                                            onClick={() => void handleUseContinuationAsSteps()}
+                                          >
+                                            写回任务
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                  </article>
+                                </div>
+                              ) : null}
+                            </section>
                           </div>
                         </ModalShell>
                       ) : null}
@@ -2605,7 +2613,7 @@ function App() {
                   </div>
                   <p className="panel-toolbar__hint">
                     {aiActionDisabledReason ??
-                      `将为已选中的 ${selectedManageAiTodoIds.length} 条代办生成最简启动步骤与后续步骤`}
+                      `将为已选中的 ${selectedManageAiTodoIds.length} 条代办生成最简启动步骤与任务上下文`}
                   </p>
                 </div>
 
@@ -2631,8 +2639,8 @@ function App() {
                                 <p>{todo.quickStartStep || '暂无最简启动步骤'}</p>
                               </div>
                               <div className="manage-todo-card__block">
-                                <span>后续步骤</span>
-                                <p>{todo.description || '暂无描述'}</p>
+                                <span>任务上下文</span>
+                                <p>{todo.description || '暂无任务上下文'}</p>
                               </div>
                             </div>
                           </div>
@@ -2895,8 +2903,7 @@ function App() {
                     </div>
 
                     <p className="panel-toolbar__hint">
-                      {aiReviewDisabledReason ??
-                        'AI 会基于当前统计范围内的专注、任务和中断数据生成一版结构化复盘'}
+                      {aiReviewDisabledReason ?? '基于当前统计生成复盘'}
                     </p>
 
                     {aiReviewDraft ? (
@@ -2904,7 +2911,6 @@ function App() {
                         <div className="ai-review-card__head">
                           <div>
                             <h3>{buildAiReviewDraftTitle(statsProject?.name ?? null)}</h3>
-                            <p>确认后会保存到 AI 复盘历史，便于后续回看。</p>
                           </div>
                         </div>
                         <div className="ai-review-card__grid">
@@ -2954,14 +2960,14 @@ function App() {
                       </article>
                     ) : (
                       <EmptyState
-                        title="还没有新的 AI 复盘"
-                        body="点击上方按钮后，这里会先展示一版可确认的复盘结果。"
+                        title="暂无 AI 复盘"
+                        body="点击上方按钮生成"
                       />
                     )}
 
                     <div className="ai-review-history">
                       <div className="ai-review-history__head">
-                        <h3>复盘历史</h3>
+                        <h3>历史</h3>
                         <span className="info-pill">{aiReviewHistory.length} 条记录</span>
                       </div>
                       {aiReviewHistory.length ? (
@@ -2985,7 +2991,7 @@ function App() {
                           ))}
                         </div>
                       ) : (
-                        <p className="timer-records__empty">还没有保存的 AI 复盘</p>
+                        <p className="timer-records__empty">暂无记录</p>
                       )}
                     </div>
                   </div>
@@ -3344,7 +3350,7 @@ function App() {
         <ModalShell title="AI 步骤预览" onClose={closeTodoAiPreview}>
           <div className="ai-preview-dialog">
             <div className="ai-preview-dialog__head">
-              <p>确认后会批量更新 `quickStartStep` 与 `description`，不会修改 `notes`。</p>
+              <p>确认后会批量更新最简启动步骤与任务上下文，不会修改备注。</p>
               <span className="info-pill">{todoAiPreview.length} 条待办</span>
             </div>
 
@@ -3364,11 +3370,11 @@ function App() {
                       <p>{item.updatedQuickStartStep}</p>
                     </section>
                     <section className="ai-preview-card__section">
-                      <span>当前描述</span>
-                      <p>{item.originalDescription || '暂无描述'}</p>
+                      <span>当前任务上下文</span>
+                      <p>{item.originalDescription || '暂无任务上下文'}</p>
                     </section>
                     <section className="ai-preview-card__section">
-                      <span>AI 后续步骤</span>
+                      <span>AI 生成的任务上下文</span>
                       <p>{item.updatedDescription}</p>
                     </section>
                   </div>
@@ -3457,28 +3463,47 @@ function App() {
       ) : null}
 
       {todoEditorOpen ? (
-        <ModalShell title={todoEditorMode === 'create' ? '新增代办' : '编辑代办'} onClose={() => setTodoEditorOpen(false)}>
-          <form className="modal-form" onSubmit={handleTodoFormSubmit}>
-            <label className="field">
-              <span>标题</span>
-              <input
-                value={todoForm.title}
-                onChange={(event) => setTodoForm({ ...todoForm, title: event.target.value })}
-                placeholder="输入任务标题"
-              />
-            </label>
-
-            <label className="field">
-              <span>最简启动步骤</span>
-              <input
-                value={todoForm.quickStartStep}
-                onChange={(event) => setTodoForm({ ...todoForm, quickStartStep: event.target.value })}
-                placeholder="填一个立刻能开始的动作"
-              />
-            </label>
+        <ModalShell
+          title={todoEditorMode === 'create' ? '新增代办' : '编辑代办'}
+          className="modal-card--todo-editor"
+          onClose={closeTodoEditor}
+        >
+          <form className="modal-form todo-editor-form" onSubmit={handleTodoFormSubmit}>
+            <section className="settings-section todo-editor-form__section todo-editor-form__section--core">
+              <div className="settings-section__head">
+                <div>
+                  <h4>基础信息</h4>
+                </div>
+              </div>
 
               <label className="field">
-                <span>步骤列表</span>
+                <span>标题</span>
+                <input
+                  value={todoForm.title}
+                  onChange={(event) => setTodoForm({ ...todoForm, title: event.target.value })}
+                  placeholder="标题"
+                />
+              </label>
+
+              <label className="field">
+                <span>最简启动</span>
+                <input
+                  value={todoForm.quickStartStep}
+                  onChange={(event) => setTodoForm({ ...todoForm, quickStartStep: event.target.value })}
+                  placeholder="最简启动"
+                />
+              </label>
+            </section>
+
+            <section className="settings-section todo-editor-form__section">
+              <div className="settings-section__head">
+                <div>
+                  <h4>步骤</h4>
+                </div>
+              </div>
+
+              <label className="field">
+                <span>步骤</span>
                 <textarea
                   rows={4}
                   value={todoFormStepsText}
@@ -3490,146 +3515,175 @@ function App() {
                       currentStepIndex: Math.min(todoForm.currentStepIndex, Math.max(nextSteps.length - 1, 0)),
                     })
                   }}
-                  placeholder="一行一步，例如：&#10;打开当前文件&#10;列出 3 个子任务&#10;先完成第 1 个"
+                  placeholder="每行一步"
                 ></textarea>
               </label>
 
-              <label className="field">
-                <span>补充说明</span>
-                <textarea
-                  rows={3}
-                  value={todoForm.description}
-                  onChange={(event) => {
-                    const nextDescription = event.target.value
-                    setTodoForm({
-                      ...todoForm,
-                      description: nextDescription,
-                    })
-                  }}
-                  placeholder="记录背景、限制条件、补充提示；不会自动改写步骤列表"
-                ></textarea>
-              </label>
 
-            <div className="modal-form__row modal-form__row--todo">
-              <label className="field field--compact">
-                <span>当前步骤</span>
-                <select
-                  value={todoForm.currentStepIndex}
-                  onChange={(event) =>
-                    setTodoForm({
-                      ...todoForm,
-                      currentStepIndex: Math.max(0, Number(event.target.value) || 0),
-                    })
-                  }
-                  disabled={!todoForm.steps.length}
-                >
-                  {!todoForm.steps.length ? <option value={0}>暂无步骤</option> : null}
-                  {todoForm.steps.map((step, index) => (
-                    <option key={`${index + 1}-${step}`} value={index}>
-                      {`第 ${index + 1} 步：${step.slice(0, 18)}${step.length > 18 ? '…' : ''}`}
-                    </option>
-                  ))}
-                </select>
-              </label>
 
-              <div className="field field--compact field--step-action">
-                <span>步骤操作</span>
-                <button
-                  type="button"
-                  className="action-button action-button--ghost"
-                  onClick={() => {
-                    const currentStep = todoForm.steps[todoForm.currentStepIndex] ?? ''
-                    setTodoForm({
-                      ...todoForm,
-                      quickStartStep: currentStep || todoForm.quickStartStep,
-                    })
-                  }}
-                  disabled={!todoForm.steps.length}
-                >
-                  同步为最简启动
-                </button>
-                <button
-                  type="button"
-                  className="action-button action-button--ghost"
-                  onClick={() => {
-                    const nextSteps = todoForm.steps.filter((_, index) => index !== todoForm.currentStepIndex)
-                    setTodoForm({
-                      ...todoForm,
-                      steps: nextSteps,
-                      currentStepIndex: Math.max(0, Math.min(todoForm.currentStepIndex, nextSteps.length - 1)),
-                    })
-                  }}
-                  disabled={!todoForm.steps.length}
-                >
-                  删除当前步骤
-                </button>
+              <div className="modal-form__row modal-form__row--todo todo-editor-form__row">
+                <label className="field field--compact">
+                  <span>当前</span>
+                  <select
+                    value={todoForm.currentStepIndex}
+                    onChange={(event) =>
+                      setTodoForm({
+                        ...todoForm,
+                        currentStepIndex: Math.max(0, Number(event.target.value) || 0),
+                      })
+                    }
+                    disabled={!todoForm.steps.length}
+                  >
+                    {!todoForm.steps.length ? <option value={0}>暂无步骤</option> : null}
+                    {todoForm.steps.map((step, index) => (
+                      <option key={`${index + 1}-${step}`} value={index}>
+                        {`第 ${index + 1} 步：${step.slice(0, 18)}${step.length > 18 ? '…' : ''}`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <div className="field field--step-action">
+                  <span>操作</span>
+                  <div className="todo-editor-form__step-actions">
+                    <button
+                      type="button"
+                      className="action-button action-button--ghost"
+                      onClick={() => {
+                        const currentStep = todoForm.steps[todoForm.currentStepIndex] ?? ''
+                        setTodoForm({
+                          ...todoForm,
+                          quickStartStep: currentStep || todoForm.quickStartStep,
+                        })
+                      }}
+                      disabled={!todoForm.steps.length}
+                    >
+                      设为最简启动
+                    </button>
+                    <button
+                      type="button"
+                      className="action-button action-button--ghost"
+                      onClick={() => {
+                        const nextSteps = todoForm.steps.filter((_, index) => index !== todoForm.currentStepIndex)
+                        setTodoForm({
+                          ...todoForm,
+                          steps: nextSteps,
+                          currentStepIndex: Math.max(0, Math.min(todoForm.currentStepIndex, nextSteps.length - 1)),
+                        })
+                      }}
+                      disabled={!todoForm.steps.length}
+                    >
+                      删除步骤
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="settings-section todo-editor-form__section">
+              <div className="settings-section__head">
+                <div>
+                  <h4>设置</h4>
+                </div>
               </div>
 
-              <label className="field">
-                <span>状态</span>
-                <select
-                  value={todoForm.status}
-                  onChange={(event) => setTodoForm({ ...todoForm, status: event.target.value as TodoStatus })}
-                >
-                  <option value="todo">待开始</option>
-                  <option value="in_progress">进行中</option>
-                  <option value="done">已完成</option>
-                  <option value="cancelled">已取消</option>
-                </select>
-              </label>
+              <div className="modal-form__row modal-form__row--todo todo-editor-form__row todo-editor-form__row--settings">
+                <label className="field">
+                  <span>状态</span>
+                  <select
+                    value={todoForm.status}
+                    onChange={(event) => setTodoForm({ ...todoForm, status: event.target.value as TodoStatus })}
+                  >
+                    <option value="todo">待开始</option>
+                    <option value="in_progress">进行中</option>
+                    <option value="done">已完成</option>
+                    <option value="cancelled">已取消</option>
+                  </select>
+                </label>
 
-              <label className="field">
-                <span>优先级</span>
-                <select
-                  value={todoForm.priority}
-                  onChange={(event) => setTodoForm({ ...todoForm, priority: event.target.value as Priority })}
-                >
-                  <option value="high">高</option>
-                  <option value="medium">中</option>
-                  <option value="low">低</option>
-                </select>
-              </label>
+                <label className="field">
+                  <span>优先级</span>
+                  <select
+                    value={todoForm.priority}
+                    onChange={(event) => setTodoForm({ ...todoForm, priority: event.target.value as Priority })}
+                  >
+                    <option value="high">高</option>
+                    <option value="medium">中</option>
+                    <option value="low">低</option>
+                  </select>
+                </label>
 
-            </div>
+                <label className="field field--compact">
+                  <span>番茄数</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={todoForm.estimatedPomodoros}
+                    onChange={(event) =>
+                      setTodoForm({
+                        ...todoForm,
+                        estimatedPomodoros: Math.max(1, Math.min(20, Number(event.target.value) || 1)),
+                      })
+                    }
+                  />
+                </label>
 
-            <div className="modal-form__row modal-form__row--todo">
-              <label className="field field--compact">
-                <span>番茄数</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={todoForm.estimatedPomodoros}
-                  onChange={(event) =>
-                    setTodoForm({
-                      ...todoForm,
-                      estimatedPomodoros: Math.max(1, Math.min(20, Number(event.target.value) || 1)),
-                    })
-                  }
-                />
-              </label>
+                <label className="field">
+                  <span>截止日期</span>
+                  <input
+                    type="date"
+                    value={todoForm.dueDate ?? ''}
+                    onChange={(event) =>
+                      setTodoForm({
+                        ...todoForm,
+                        dueDate: event.target.value.trim() || null,
+                      })
+                    }
+                  />
+                </label>
+              </div>
+            </section>
 
-              <label className="field">
-                <span>截止日期</span>
-                <input
-                  type="date"
-                  value={todoForm.dueDate ?? ''}
-                  onChange={(event) =>
-                    setTodoForm({
-                      ...todoForm,
-                      dueDate: event.target.value.trim() || null,
-                    })
-                  }
-                />
-              </label>
-            </div>
-
-            <div className="modal-form__actions">
+            <section
+              className={
+                todoContextOpen
+                  ? 'focus-kickoff__details todo-editor-form__details is-open'
+                  : 'focus-kickoff__details todo-editor-form__details'
+              }
+            >
               <button
                 type="button"
-                className="action-button action-button--ghost"
-                onClick={() => setTodoEditorOpen(false)}
+                className="focus-kickoff__details-toggle"
+                onClick={() => setTodoContextOpen((current) => !current)}
+                aria-expanded={todoContextOpen}
               >
+                <span>任务上下文（可选）</span>
+                <strong>{todoContextOpen ? '收起' : '展开查看'}</strong>
+              </button>
+              {todoContextOpen ? (
+                <div className="focus-kickoff__details-body">
+                  <label className="field field--todo-context">
+                    <span>任务上下文（可选）</span>
+                    <textarea
+                      rows={3}
+                      value={todoForm.description}
+                      onChange={(event) => {
+                        const nextDescription = event.target.value
+                        setTodoForm({
+                          ...todoForm,
+                          description: nextDescription,
+                        })
+                      }}
+                      placeholder="记录背景、限制、参考信息和给 AI 的上下文；不会自动改写步骤列表"
+                    ></textarea>
+                  </label>
+                </div>
+              ) : null}
+            </section>
+
+            <div className="modal-form__actions">
+              <button type="button" className="action-button action-button--ghost" onClick={closeTodoEditor}>
                 取消
               </button>
               <button type="submit" className="action-button action-button--primary">

@@ -42,7 +42,7 @@ export function buildTodoAiApplyDrafts(todos: Todo[], suggestions: TodoAiSuggest
       throw new Error(`AI 未为「${todo.title}」生成有效的最简启动步骤`)
     }
     if (!nextDescription) {
-      throw new Error(`AI 未为「${todo.title}」生成有效描述`)
+      throw new Error(`AI 未为「${todo.title}」生成有效的任务上下文`)
     }
 
     seenTodoIds.add(suggestion.todoId)
@@ -82,7 +82,7 @@ export function buildTodoActivationReliefDraft(
   }
 
   if (!nextDescription) {
-    throw new Error(`AI 未为「${todo.title}」生成有效的后续推进步骤`)
+    throw new Error(`AI 未为「${todo.title}」生成有效的任务上下文`)
   }
 
   if (!nextFallbackStep) {
