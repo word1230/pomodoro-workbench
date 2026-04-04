@@ -2431,11 +2431,11 @@ function App() {
                   </div>
                 </div>
 
-                {focusQueue.length ? (
-                  <div className="support-panel support-panel--queue">
-                    <div className="focus-queue__head">
-                      <h4>待切换任务</h4>
-                    </div>
+                <div className="support-panel support-panel--queue">
+                  <div className="focus-queue__head">
+                    <h4>待切换任务</h4>
+                  </div>
+                  {focusQueue.length ? (
                     <div className="focus-queue__list">
                       {focusQueue.map((todo) => (
                         <button
@@ -2458,8 +2458,10 @@ function App() {
                         </button>
                       ))}
                     </div>
-                  </div>
-                ) : null}
+                  ) : (
+                    <p className="focus-queue__empty">当前项目只有这一条任务，先专注把它推进。</p>
+                  )}
+                </div>
 
                 <div className="timer-records">
                   <div className="timer-records__head">

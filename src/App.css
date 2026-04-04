@@ -390,14 +390,14 @@
 }
 
 .page-grid--focus {
-  grid-template-columns: minmax(0, 1.16fr) minmax(340px, 0.84fr);
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
   align-items: stretch;
   max-width: none;
   margin: 0;
   width: 100%;
   height: 100%;
   min-height: 0;
-  gap: 20px;
+  gap: 24px;
   padding: 14px 0 0;
   overflow: hidden;
 }
@@ -591,8 +591,9 @@
 }
 
 .panel--support-shell .panel__head {
-  width: min(100%, var(--support-card-width));
-  margin-inline: auto;
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
   min-height: 54px;
   padding-top: 10px;
   padding-bottom: 10px;
@@ -890,6 +891,14 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+}
+
+.focus-queue__empty {
+  margin: 0;
+  padding: 2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
 }
 
 .focus-kickoff {
@@ -3318,6 +3327,8 @@
 
 /* Focus page: launch hierarchy */
 .focus-kickoff--board {
+  width: 100%;
+  min-width: 0;
   grid-template-columns: 1fr;
   gap: 14px;
   min-height: 0;
@@ -3325,6 +3336,8 @@
 
 .focus-kickoff--board > .focus-kickoff__hero {
   display: grid;
+  width: 100%;
+  min-width: 0;
   grid-template-columns: 1fr;
   gap: 14px;
   align-items: start;
@@ -3337,6 +3350,8 @@
 }
 
 .focus-kickoff--board .focus-kickoff__section--primary {
+  width: 100%;
+  min-width: 0;
   gap: 18px;
   padding: 16px 0 14px;
   border: 0;
@@ -3631,6 +3646,15 @@
   padding-top: 0;
 }
 
+.focus-kickoff--board .focus-kickoff__hero-head,
+.focus-kickoff--board .focus-kickoff__metrics,
+.focus-kickoff--board .focus-kickoff__card--primary,
+.focus-kickoff--board .focus-kickoff__details,
+.focus-kickoff--board .focus-kickoff__more-bar {
+  width: 100%;
+  min-width: 0;
+}
+
 .focus-kickoff--board .focus-kickoff__primary-actions {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: stretch;
@@ -3641,7 +3665,14 @@
 .focus-kickoff--board .focus-kickoff__primary-actions .action-button {
   min-height: 46px;
   min-width: 0;
-  white-space: nowrap;
+  padding-inline: 16px;
+  white-space: normal;
+}
+
+.focus-kickoff--board .focus-kickoff__primary-actions .action-button--compact {
+  min-height: 46px;
+  padding-inline: 16px;
+  font-size: 13px;
 }
 
 .focus-kickoff--board .focus-kickoff__plan-card {
@@ -3946,8 +3977,9 @@
 .panel--support-shell .focus-queue__head,
 .panel--support-shell .focus-queue__list,
 .panel--support-shell .timer-records {
-  width: min(100%, var(--support-card-width));
-  margin-inline: auto;
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
 }
 
 .panel--support-shell .support-panel,
