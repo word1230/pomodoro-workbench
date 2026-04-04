@@ -5,6 +5,7 @@ import type {
   TodoAiSuggestion,
   TodoDraft,
 } from '../types'
+import { normalizeTodoDraft } from './todo-steps'
 
 export function hasAiCompletionConfig(settings: AppSettings): boolean {
   return Boolean(settings.aiBaseUrl.trim() && settings.aiApiKey.trim() && settings.aiModelId.trim())
@@ -46,7 +47,7 @@ export function buildTodoAiApplyDrafts(todos: Todo[], suggestions: TodoAiSuggest
 
     seenTodoIds.add(suggestion.todoId)
 
-    return {
+    return normalizeTodoDraft({
       id: todo.id,
       projectId: todo.projectId,
       title: todo.title,
@@ -58,7 +59,9 @@ export function buildTodoAiApplyDrafts(todos: Todo[], suggestions: TodoAiSuggest
       estimatedPomodoros: todo.estimatedPomodoros,
       dueDate: todo.dueDate,
       isToday: todo.isToday,
-    }
+      steps: todo.steps,
+      currentStepIndex: 0,
+    })
   })
 }
 
@@ -86,7 +89,7 @@ export function buildTodoActivationReliefDraft(
     throw new Error(`AI 未为「${todo.title}」生成有效的备用动作`)
   }
 
-  return {
+  return normalizeTodoDraft({
     id: todo.id,
     projectId: todo.projectId,
     title: todo.title,
@@ -98,7 +101,9 @@ export function buildTodoActivationReliefDraft(
     estimatedPomodoros: todo.estimatedPomodoros,
     dueDate: todo.dueDate,
     isToday: todo.isToday,
-  }
+    steps: todo.steps,
+    currentStepIndex: todo.currentStepIndex,
+  })
 }
 
 export function mergeActivationFallback(description: string, fallbackStep: string): string {

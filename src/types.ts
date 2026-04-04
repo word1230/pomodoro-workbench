@@ -36,6 +36,8 @@ export interface Todo {
   completedPomodoros: number
   dueDate: string | null
   isToday: boolean
+  steps: string[]
+  currentStepIndex: number
   createdAt: string
   completedAt: string | null
 }
@@ -96,6 +98,8 @@ export interface TodoDraft {
   estimatedPomodoros: number
   dueDate: string | null
   isToday: boolean
+  steps: string[]
+  currentStepIndex: number
 }
 
 export interface FocusSessionDraft {

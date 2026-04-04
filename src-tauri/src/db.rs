@@ -153,7 +153,8 @@ pub fn save_todo(app: &AppHandle, todo: TodoDraft) -> AppResult<AppSnapshot> {
             .execute(
                 "UPDATE todos
                  SET project_id = ?2, title = ?3, quick_start_step = ?4, description = ?5, notes = ?6, status = ?7,
-                     priority = ?8, estimated_pomodoros = ?9, due_date = ?10, is_today = ?11, completed_at = ?12
+                     priority = ?8, estimated_pomodoros = ?9, due_date = ?10, is_today = ?11, steps_json = ?12,
+                     current_step_index = ?13, completed_at = ?14
                  WHERE id = ?1",
                 params![
                     id,
@@ -167,6 +168,8 @@ pub fn save_todo(app: &AppHandle, todo: TodoDraft) -> AppResult<AppSnapshot> {
                     normalize_pomodoro_count(todo.estimated_pomodoros),
                     todo.due_date,
                     bool_to_int(todo.is_today),
+                    to_json_string(&todo.steps).map_err(to_string)?,
+                    todo.current_step_index,
                     next_completed_at
                 ],
             )
@@ -176,8 +179,9 @@ pub fn save_todo(app: &AppHandle, todo: TodoDraft) -> AppResult<AppSnapshot> {
             .execute(
                 "INSERT INTO todos (
                     id, project_id, title, quick_start_step, description, notes, status, priority,
-                    estimated_pomodoros, completed_pomodoros, due_date, is_today, created_at, completed_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, ?12, ?13)",
+                    estimated_pomodoros, completed_pomodoros, due_date, is_today, steps_json, current_step_index,
+                    created_at, completed_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, ?12, ?13, ?14, ?15)",
                 params![
                     Uuid::new_v4().to_string(),
                     todo.project_id,
@@ -190,6 +194,8 @@ pub fn save_todo(app: &AppHandle, todo: TodoDraft) -> AppResult<AppSnapshot> {
                     normalize_pomodoro_count(todo.estimated_pomodoros),
                     todo.due_date,
                     bool_to_int(todo.is_today),
+                    to_json_string(&todo.steps).map_err(to_string)?,
+                    todo.current_step_index,
                     now,
                     completed_at
                 ],
@@ -553,7 +559,8 @@ fn load_todos(connection: &Connection) -> AppResult<Vec<Todo>> {
         .prepare(
             "SELECT
                 id, project_id, title, quick_start_step, description, notes, status, priority,
-                estimated_pomodoros, completed_pomodoros, due_date, is_today, created_at, completed_at
+                estimated_pomodoros, completed_pomodoros, due_date, is_today, steps_json, current_step_index,
+                created_at, completed_at
              FROM todos
              ORDER BY is_today DESC, created_at DESC",
         )
@@ -561,6 +568,11 @@ fn load_todos(connection: &Connection) -> AppResult<Vec<Todo>> {
 
     let rows = statement
         .query_map([], |row| {
+            let steps_json = row.get::<_, String>(12)?;
+            let steps = from_str(&steps_json).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(12, Type::Text, Box::new(error))
+            })?;
+
             Ok(Todo {
                 id: row.get(0)?,
                 project_id: row.get(1)?,
@@ -574,8 +586,10 @@ fn load_todos(connection: &Connection) -> AppResult<Vec<Todo>> {
                 completed_pomodoros: row.get(9)?,
                 due_date: row.get(10)?,
                 is_today: int_to_bool(row.get::<_, i64>(11)?),
-                created_at: row.get(12)?,
-                completed_at: row.get(13)?,
+                steps,
+                current_step_index: row.get(13)?,
+                created_at: row.get(14)?,
+                completed_at: row.get(15)?,
             })
         })
         .map_err(to_string)?;
@@ -714,6 +728,8 @@ fn create_schema(connection: &Connection) -> AppResult<()> {
                 completed_pomodoros INTEGER NOT NULL DEFAULT 0,
                 due_date TEXT,
                 is_today INTEGER NOT NULL DEFAULT 0,
+                steps_json TEXT NOT NULL DEFAULT '[]',
+                current_step_index INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 completed_at TEXT
             );
@@ -803,6 +819,8 @@ fn migrate_todos_schema(connection: &Connection) -> AppResult<()> {
         .map_err(to_string)?;
 
     add_column_if_missing(connection, &columns, "todos", "quick_start_step", "TEXT NOT NULL DEFAULT ''")?;
+    add_column_if_missing(connection, &columns, "todos", "steps_json", "TEXT NOT NULL DEFAULT '[]'")?;
+    add_column_if_missing(connection, &columns, "todos", "current_step_index", "INTEGER NOT NULL DEFAULT 0")?;
 
     Ok(())
 }
@@ -877,8 +895,9 @@ fn seed_if_empty(connection: &Connection) -> AppResult<()> {
         .execute(
             "INSERT INTO todos (
                 id, project_id, title, quick_start_step, description, notes, status, priority,
-                estimated_pomodoros, completed_pomodoros, due_date, is_today, created_at, completed_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 4, 2, ?9, 1, ?10, NULL)",
+                estimated_pomodoros, completed_pomodoros, due_date, is_today, steps_json, current_step_index,
+                created_at, completed_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 4, 2, ?9, 1, ?10, 0, ?11, NULL)",
             params![
                 reading_todo_id,
                 study_project_id,
@@ -889,6 +908,7 @@ fn seed_if_empty(connection: &Connection) -> AppResult<()> {
                 "in_progress",
                 "high",
                 date_days(now, 2),
+                to_json_string(&vec!["按题型拆解错题，记录生词。".to_string()]).map_err(to_string)?,
                 iso_days(now, -5)
             ],
         )
@@ -897,8 +917,9 @@ fn seed_if_empty(connection: &Connection) -> AppResult<()> {
         .execute(
             "INSERT INTO todos (
                 id, project_id, title, quick_start_step, description, notes, status, priority,
-                estimated_pomodoros, completed_pomodoros, due_date, is_today, created_at, completed_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 3, 0, ?9, 1, ?10, NULL)",
+                estimated_pomodoros, completed_pomodoros, due_date, is_today, steps_json, current_step_index,
+                created_at, completed_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 3, 0, ?9, 1, ?10, 0, ?11, NULL)",
             params![
                 prototype_todo_id,
                 product_project_id,
@@ -909,6 +930,7 @@ fn seed_if_empty(connection: &Connection) -> AppResult<()> {
                 "todo",
                 "high",
                 date_days(now, 1),
+                to_json_string(&vec!["把导航、卡片和统计逻辑统一。".to_string()]).map_err(to_string)?,
                 iso_days(now, -3)
             ],
         )
@@ -917,8 +939,9 @@ fn seed_if_empty(connection: &Connection) -> AppResult<()> {
         .execute(
             "INSERT INTO todos (
                 id, project_id, title, quick_start_step, description, notes, status, priority,
-                estimated_pomodoros, completed_pomodoros, due_date, is_today, created_at, completed_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, '', ?6, ?7, 2, 0, ?8, 0, ?9, NULL)",
+                estimated_pomodoros, completed_pomodoros, due_date, is_today, steps_json, current_step_index,
+                created_at, completed_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, '', ?6, ?7, 2, 0, ?8, 0, ?9, 0, ?10, NULL)",
             params![
                 metric_todo_id,
                 product_project_id,
@@ -928,6 +951,7 @@ fn seed_if_empty(connection: &Connection) -> AppResult<()> {
                 "todo",
                 "medium",
                 date_days(now, 3),
+                to_json_string(&vec!["把趋势图和项目占比的文案补齐。".to_string()]).map_err(to_string)?,
                 iso_days(now, -2)
             ],
         )
@@ -936,8 +960,9 @@ fn seed_if_empty(connection: &Connection) -> AppResult<()> {
         .execute(
             "INSERT INTO todos (
                 id, project_id, title, quick_start_step, description, notes, status, priority,
-                estimated_pomodoros, completed_pomodoros, due_date, is_today, created_at, completed_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, '', ?6, ?7, 2, 0, NULL, 0, ?8, NULL)",
+                estimated_pomodoros, completed_pomodoros, due_date, is_today, steps_json, current_step_index,
+                created_at, completed_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, '', ?6, ?7, 2, 0, NULL, 0, ?8, 0, ?9, NULL)",
             params![
                 walk_todo_id,
                 health_project_id,
@@ -946,6 +971,7 @@ fn seed_if_empty(connection: &Connection) -> AppResult<()> {
                 "恢复心肺，不追配速。",
                 "todo",
                 "low",
+                to_json_string(&vec!["恢复心肺，不追配速。".to_string()]).map_err(to_string)?,
                 iso_days(now, -4)
             ],
         )

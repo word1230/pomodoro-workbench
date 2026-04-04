@@ -1133,6 +1133,8 @@ mod tests {
             completed_pomodoros: 0,
             due_date: None,
             is_today: false,
+            steps: vec!["Current description".to_string()],
+            current_step_index: 0,
             created_at: "2026-04-02T00:00:00.000Z".to_string(),
             completed_at: None,
         }

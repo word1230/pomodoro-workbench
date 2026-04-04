@@ -16,6 +16,11 @@ import type {
   TodoAiSuggestion,
   TodoDraft,
 } from '../types'
+import {
+  normalizeTodo,
+  normalizeTodoDraft,
+  parseTodoSteps,
+} from './todo-steps'
 
 declare global {
   interface Window {
@@ -31,16 +36,24 @@ export function isTauriEnvironment(): boolean {
   return typeof window !== 'undefined' && typeof window.__TAURI_INTERNALS__ !== 'undefined'
 }
 
+function normalizeSnapshot(snapshot: AppSnapshot): AppSnapshot {
+  return {
+    ...snapshot,
+    todos: snapshot.todos.map((todo) => normalizeTodo(todo)),
+  }
+}
+
 export async function loadSnapshot(): Promise<AppSnapshot> {
   if (isTauriEnvironment()) {
-    return invoke<AppSnapshot>('load_snapshot')
+    const snapshot = await invoke<AppSnapshot>('load_snapshot')
+    return normalizeSnapshot(snapshot)
   }
   return readSnapshot()
 }
 
 export async function saveProject(project: ProjectDraft): Promise<AppSnapshot> {
   if (isTauriEnvironment()) {
-    return invoke<AppSnapshot>('save_project', { project })
+    return normalizeSnapshot(await invoke<AppSnapshot>('save_project', { project }))
   }
   const snapshot = readSnapshot()
   const timestamp = nowIso()
@@ -73,7 +86,7 @@ export async function saveProject(project: ProjectDraft): Promise<AppSnapshot> {
 
 export async function archiveProject(projectId: string, archived: boolean): Promise<AppSnapshot> {
   if (isTauriEnvironment()) {
-    return invoke<AppSnapshot>('archive_project', { projectId, archived })
+    return normalizeSnapshot(await invoke<AppSnapshot>('archive_project', { projectId, archived }))
   }
   const snapshot = readSnapshot()
   snapshot.projects = snapshot.projects.map((project) =>
@@ -90,7 +103,7 @@ export async function archiveProject(projectId: string, archived: boolean): Prom
 
 export async function deleteProject(projectId: string): Promise<AppSnapshot> {
   if (isTauriEnvironment()) {
-    return invoke<AppSnapshot>('delete_project', { projectId })
+    return normalizeSnapshot(await invoke<AppSnapshot>('delete_project', { projectId }))
   }
   const snapshot = readSnapshot()
   const todoIds = new Set(snapshot.todos.filter((todo) => todo.projectId === projectId).map((todo) => todo.id))
@@ -103,45 +116,54 @@ export async function deleteProject(projectId: string): Promise<AppSnapshot> {
 }
 
 export async function saveTodo(todo: TodoDraft): Promise<AppSnapshot> {
+  const normalizedTodo = normalizeTodoDraft(todo)
   if (isTauriEnvironment()) {
-    return invoke<AppSnapshot>('save_todo', { todo })
+    const snapshot = await invoke<AppSnapshot>('save_todo', { todo: normalizedTodo })
+    return {
+      ...snapshot,
+      todos: snapshot.todos.map((item) => normalizeTodo(item)),
+    }
   }
   const snapshot = readSnapshot()
   const timestamp = nowIso()
-  if (todo.id) {
+  if (normalizedTodo.id) {
     snapshot.todos = snapshot.todos.map((item) =>
-      item.id === todo.id
-        ? {
+      item.id === normalizedTodo.id
+        ? normalizeTodo({
             ...item,
-            ...todo,
-            completedAt: todo.status === 'done' ? item.completedAt ?? timestamp : null,
-          }
+            ...normalizedTodo,
+            completedAt: normalizedTodo.status === 'done' ? item.completedAt ?? timestamp : null,
+          })
         : item,
     )
   } else {
-    snapshot.todos.unshift({
-      id: crypto.randomUUID(),
-      projectId: todo.projectId,
-      title: todo.title,
-      quickStartStep: todo.quickStartStep,
-      description: todo.description,
-      notes: todo.notes,
-      status: todo.status,
-      priority: todo.priority,
-      estimatedPomodoros: todo.estimatedPomodoros,
-      completedPomodoros: 0,
-      dueDate: todo.dueDate,
-      isToday: todo.isToday,
-      createdAt: timestamp,
-      completedAt: todo.status === 'done' ? timestamp : null,
-    })
+    snapshot.todos.unshift(
+      normalizeTodo({
+        id: crypto.randomUUID(),
+        projectId: normalizedTodo.projectId,
+        title: normalizedTodo.title,
+        quickStartStep: normalizedTodo.quickStartStep,
+        description: normalizedTodo.description,
+        notes: normalizedTodo.notes,
+        status: normalizedTodo.status,
+        priority: normalizedTodo.priority,
+        estimatedPomodoros: normalizedTodo.estimatedPomodoros,
+        completedPomodoros: 0,
+        dueDate: normalizedTodo.dueDate,
+        isToday: normalizedTodo.isToday,
+        steps: normalizedTodo.steps,
+        currentStepIndex: normalizedTodo.currentStepIndex,
+        createdAt: timestamp,
+        completedAt: normalizedTodo.status === 'done' ? timestamp : null,
+      }),
+    )
   }
   return writeSnapshot(snapshot)
 }
 
 export async function deleteTodo(todoId: string): Promise<AppSnapshot> {
   if (isTauriEnvironment()) {
-    return invoke<AppSnapshot>('delete_todo', { todoId })
+    return normalizeSnapshot(await invoke<AppSnapshot>('delete_todo', { todoId }))
   }
   const snapshot = readSnapshot()
   snapshot.todos = snapshot.todos.filter((todo) => todo.id !== todoId)
@@ -150,7 +172,7 @@ export async function deleteTodo(todoId: string): Promise<AppSnapshot> {
 
 export async function saveSettings(settings: AppSettings): Promise<AppSnapshot> {
   if (isTauriEnvironment()) {
-    return invoke<AppSnapshot>('save_settings', { settings })
+    return normalizeSnapshot(await invoke<AppSnapshot>('save_settings', { settings }))
   }
   const snapshot = readSnapshot()
   snapshot.settings = settings
@@ -214,7 +236,7 @@ export async function saveAiReview(review: AiReviewRecordDraft): Promise<AiRevie
 
 export async function recordFocusSession(session: FocusSessionDraft): Promise<AppSnapshot> {
   if (isTauriEnvironment()) {
-    return invoke<AppSnapshot>('record_focus_session', { session })
+    return normalizeSnapshot(await invoke<AppSnapshot>('record_focus_session', { session }))
   }
   const snapshot = readSnapshot()
   snapshot.sessions.unshift({
@@ -344,7 +366,11 @@ export async function listenTrayActions(
 function readSnapshot(): AppSnapshot {
   const raw = localStorage.getItem(STORAGE_KEY)
   if (raw) {
-    return JSON.parse(raw) as AppSnapshot
+    const snapshot = JSON.parse(raw) as AppSnapshot
+    return {
+      ...snapshot,
+      todos: snapshot.todos.map((todo) => normalizeTodo(todo)),
+    }
   }
   const seeded = buildSeedSnapshot()
   localStorage.setItem(STORAGE_KEY, JSON.stringify(seeded))
@@ -352,8 +378,12 @@ function readSnapshot(): AppSnapshot {
 }
 
 function writeSnapshot(snapshot: AppSnapshot): AppSnapshot {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot))
-  return snapshot
+  const normalizedSnapshot = {
+    ...snapshot,
+    todos: snapshot.todos.map((todo) => normalizeTodo(todo)),
+  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizedSnapshot))
+  return normalizedSnapshot
 }
 
 function buildSeedSnapshot(): AppSnapshot {
@@ -426,6 +456,8 @@ function buildSeedSnapshot(): AppSnapshot {
       completedPomodoros: 2,
       dueDate: shiftDate(now, 2),
       isToday: true,
+      steps: parseTodoSteps('按题型拆解错题，记录生词。'),
+      currentStepIndex: 0,
       createdAt: shiftIso(now, -5),
       completedAt: null,
     },
@@ -442,6 +474,8 @@ function buildSeedSnapshot(): AppSnapshot {
       completedPomodoros: 0,
       dueDate: shiftDate(now, 1),
       isToday: true,
+      steps: parseTodoSteps('把导航、卡片和统计逻辑统一。'),
+      currentStepIndex: 0,
       createdAt: shiftIso(now, -3),
       completedAt: null,
     },
@@ -458,6 +492,8 @@ function buildSeedSnapshot(): AppSnapshot {
       completedPomodoros: 0,
       dueDate: shiftDate(now, 3),
       isToday: false,
+      steps: parseTodoSteps('把趋势图和项目占比的文案补齐。'),
+      currentStepIndex: 0,
       createdAt: shiftIso(now, -2),
       completedAt: null,
     },
@@ -474,6 +510,8 @@ function buildSeedSnapshot(): AppSnapshot {
       completedPomodoros: 0,
       dueDate: null,
       isToday: false,
+      steps: parseTodoSteps('恢复心肺，不追配速。'),
+      currentStepIndex: 0,
       createdAt: shiftIso(now, -4),
       completedAt: null,
     },

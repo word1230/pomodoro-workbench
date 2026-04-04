@@ -27,6 +27,8 @@ pub struct Todo {
     pub completed_pomodoros: i64,
     pub due_date: Option<String>,
     pub is_today: bool,
+    pub steps: Vec<String>,
+    pub current_step_index: i64,
     pub created_at: String,
     pub completed_at: Option<String>,
 }
@@ -97,6 +99,8 @@ pub struct TodoDraft {
     pub estimated_pomodoros: i64,
     pub due_date: Option<String>,
     pub is_today: bool,
+    pub steps: Vec<String>,
+    pub current_step_index: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]

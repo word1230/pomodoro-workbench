@@ -67,6 +67,13 @@ import {
   pruneSelectedTodoIds,
 } from './lib/todo-ai'
 import {
+  buildTodoDraftFromTodo,
+  getCurrentTodoStep,
+  getResolvedTodoSteps,
+  normalizeTodoDraft,
+  parseTodoSteps,
+} from './lib/todo-steps'
+import {
   PHASE_REMINDER_INITIAL_DELAY_MS,
   PHASE_REMINDER_INTERVAL_MS,
   buildBreakCompletionPrompt,
@@ -194,6 +201,8 @@ function App() {
   const [focusFeedbackDraft, setFocusFeedbackDraft] = useState<FocusFeedbackDraft | null>(null)
   const [focusContinuationSuggestion, setFocusContinuationSuggestion] =
     useState<FocusContinuationSuggestion | null>(null)
+  const [focusContinuationDraft, setFocusContinuationDraft] = useState<string[]>([])
+  const [focusContinuationQuickStartDraft, setFocusContinuationQuickStartDraft] = useState('')
   const [focusContinuationGenerating, setFocusContinuationGenerating] = useState(false)
   const [focusFeedbackOpen, setFocusFeedbackOpen] = useState(false)
   const [focusFeedbackCollapsed, setFocusFeedbackCollapsed] = useState(false)
@@ -203,6 +212,7 @@ function App() {
   const [activationReliefHelpful, setActivationReliefHelpful] = useState(false)
   const [activationAiGenerating, setActivationAiGenerating] = useState(false)
   const [activationAssistOpen, setActivationAssistOpen] = useState(false)
+  const [launchManageOpen, setLaunchManageOpen] = useState(false)
   const [launchDetailsOpen, setLaunchDetailsOpen] = useState(false)
   const [launchMoreOpen, setLaunchMoreOpen] = useState(false)
   const focusFeedbackCardRef = useRef<HTMLDivElement | null>(null)
@@ -223,7 +233,10 @@ function App() {
     estimatedPomodoros: 1,
     dueDate: null,
     isToday: false,
+    steps: [],
+    currentStepIndex: 0,
   })
+  const todoFormStepsText = todoForm.steps.join('\n')
   const deferredSnapshot = useDeferredValue(snapshot)
 
   const analytics = useMemo(
@@ -351,6 +364,15 @@ function App() {
   const supportTimerProgress = activationSession.todoId ? activationProgress : timerFaceProgress
   const supportTimerDisplaySeconds = activationSession.todoId ? activationSession.remainingSec : timerDisplaySeconds
   const supportTimerTodo = activeTimerTodo ?? activationTodo ?? selectedTodo
+  const supportTimerStatusLabel = activationSession.todoId
+    ? activationSession.running
+      ? '5 分钟启动中'
+      : '5 分钟启动已暂停'
+    : timer.phase === 'idle'
+      ? '准备开始'
+      : timer.running
+        ? phaseLabel(timer.phase)
+        : `${phaseLabel(timer.phase)} · 已暂停`
   const focusHistoryProjectId = selectedProject?.id ?? null
   const recentFocusRecordGroups = useMemo(() => {
     if (!snapshot) {
@@ -415,8 +437,8 @@ function App() {
   )
   const kickoffPrimaryLabel =
     selectedTodo && focusSuggestion.isResume && selectedTodo.id === focusSuggestion.todoId
-      ? '继续刚才那件事'
-      : '直接进入番茄钟'
+      ? '继续上一轮专注'
+      : '开始 25 分钟专注'
   const focusContinuationDisabledReason =
     !selectedTodo
       ? '先选择任务'
@@ -440,16 +462,34 @@ function App() {
   const selectedActivationBlockReason =
     activationBlockReasonOptions.find((option) => option.id === activationBlockReason) ??
     activationBlockReasonOptions[0]
-  const selectedTodoDescriptionSteps = selectedTodo ? parseStepItems(selectedTodo.description) : []
-  const hasLaunchContextSteps = selectedTodoDescriptionSteps.length > 1
+  const selectedTodoSteps = selectedTodo ? getResolvedTodoSteps(selectedTodo) : []
+  const selectedTodoCurrentStepIndex = selectedTodo?.currentStepIndex ?? 0
+  const selectedTodoCurrentStep = selectedTodo
+    ? getCurrentTodoStep(selectedTodo) || '还没有最简启动步骤'
+    : '还没有最简启动步骤'
+  const selectedTodoUpcomingSteps = selectedTodoSteps.slice(selectedTodoCurrentStepIndex + 1, selectedTodoCurrentStepIndex + 3)
+  const hasLaunchContextSteps = selectedTodoSteps.length > 0
   const launchContextFallback =
-    selectedTodoDescriptionSteps[0] ?? '还没有补充后续步骤，先完成这一轮，再补详细推进路径。'
+    selectedTodoCurrentStep || '还没有补充后续步骤，先完成这一轮，再补详细推进路径。'
   const launchContextItems = hasLaunchContextSteps
-    ? selectedTodoDescriptionSteps
+    ? selectedTodoSteps
     : [launchContextFallback]
   const remainingPomodoros = selectedTodo ? getRemainingPomodoros(selectedTodo) : 0
+
+  useEffect(() => {
+    if (!focusContinuationSuggestion) {
+      setFocusContinuationQuickStartDraft('')
+      setFocusContinuationDraft([])
+      return
+    }
+
+    setFocusContinuationQuickStartDraft(focusContinuationSuggestion.quickStartStep)
+    setFocusContinuationDraft(focusContinuationSuggestion.nextSteps)
+  }, [focusContinuationSuggestion])
+
   const closeLaunchMorePanel = () => {
     setLaunchMoreOpen(false)
+    setLaunchManageOpen(false)
     setActivationAssistOpen(false)
     setFocusFeedbackOpen(false)
     setFocusFeedbackCollapsed(false)
@@ -535,6 +575,7 @@ function App() {
     setActivationReliefHelpful(false)
     setActivationBlockReason('unclear_start')
     setActivationAssistOpen(false)
+    setLaunchManageOpen(false)
     setLaunchDetailsOpen(shouldAutoOpenLaunchDetails)
     setLaunchMoreOpen(false)
   }, [selectedTodo?.id, shouldAutoOpenLaunchDetails])
@@ -697,19 +738,12 @@ function App() {
 
     if (nextTodo.status === 'todo' || nextTodo.estimatedPomodoros !== target) {
       await syncSnapshot(
-        saveTodo({
-          id: nextTodo.id,
-          projectId: nextTodo.projectId,
-          title: nextTodo.title,
-          quickStartStep: nextTodo.quickStartStep,
-          description: nextTodo.description,
-          notes: nextTodo.notes,
-          status: nextTodo.status === 'todo' ? 'in_progress' : nextTodo.status,
-          priority: nextTodo.priority,
-          estimatedPomodoros: target,
-          dueDate: nextTodo.dueDate,
-          isToday: nextTodo.isToday,
-        }),
+        saveTodo(
+          buildTodoDraftFromTodo(nextTodo, {
+            status: nextTodo.status === 'todo' ? 'in_progress' : nextTodo.status,
+            estimatedPomodoros: target,
+          }),
+        ),
         { silent: true },
       )
     }
@@ -756,19 +790,11 @@ function App() {
 
     if (nextTodo.status === 'todo') {
       await syncSnapshot(
-        saveTodo({
-          id: nextTodo.id,
-          projectId: nextTodo.projectId,
-          title: nextTodo.title,
-          quickStartStep: nextTodo.quickStartStep,
-          description: nextTodo.description,
-          notes: nextTodo.notes,
-          status: 'in_progress',
-          priority: nextTodo.priority,
-          estimatedPomodoros: nextTodo.estimatedPomodoros,
-          dueDate: nextTodo.dueDate,
-          isToday: nextTodo.isToday,
-        }),
+        saveTodo(
+          buildTodoDraftFromTodo(nextTodo, {
+            status: 'in_progress',
+          }),
+        ),
         { silent: true },
       )
     }
@@ -1103,6 +1129,7 @@ function App() {
     setSelectedAiTodoIds([])
     setColorPickerOpen(false)
     setConfirmState(null)
+    setLaunchManageOpen(false)
     setFocusFeedbackOpen(false)
   }, [page])
 
@@ -1145,32 +1172,40 @@ function App() {
   const openTodoEditor = (todo?: Todo) => {
     setTodoEditorMode(todo ? 'edit' : 'create')
     if (todo) {
-      setTodoForm({
-        id: todo.id,
-        projectId: todo.projectId,
-        title: todo.title,
-        quickStartStep: todo.quickStartStep,
-        description: todo.description,
-        notes: todo.notes,
-        status: todo.status,
-        priority: todo.priority,
-        estimatedPomodoros: todo.estimatedPomodoros,
-        dueDate: todo.dueDate,
-        isToday: todo.isToday,
-      })
+      setTodoForm(
+        normalizeTodoDraft({
+          id: todo.id,
+          projectId: todo.projectId,
+          title: todo.title,
+          quickStartStep: todo.quickStartStep,
+          description: todo.description,
+          notes: todo.notes,
+          status: todo.status,
+          priority: todo.priority,
+          estimatedPomodoros: todo.estimatedPomodoros,
+          dueDate: todo.dueDate,
+          isToday: todo.isToday,
+          steps: getResolvedTodoSteps(todo),
+          currentStepIndex: todo.currentStepIndex,
+        }),
+      )
     } else {
-      setTodoForm({
-        projectId: manageProject?.id ?? projects[0]?.id ?? '',
-        title: '',
-        quickStartStep: '',
-        description: '',
-        notes: '',
-        status: 'todo',
-        priority: 'medium',
-        estimatedPomodoros: 1,
-        dueDate: null,
-        isToday: false,
-      })
+      setTodoForm(
+        normalizeTodoDraft({
+          projectId: manageProject?.id ?? projects[0]?.id ?? '',
+          title: '',
+          quickStartStep: '',
+          description: '',
+          notes: '',
+          status: 'todo',
+          priority: 'medium',
+          estimatedPomodoros: 1,
+          dueDate: null,
+          isToday: false,
+          steps: [],
+          currentStepIndex: 0,
+        }),
+      )
     }
     setTodoEditorOpen(true)
   }
@@ -1204,18 +1239,24 @@ function App() {
       return
     }
 
-    const next = await syncSnapshot(saveTodo(todoForm), {
+    const nextDraft = normalizeTodoDraft({
+      ...todoForm,
+      steps: todoForm.steps,
+      currentStepIndex: todoForm.currentStepIndex,
+    })
+
+    const next = await syncSnapshot(saveTodo(nextDraft), {
       message: todoEditorMode === 'create' ? '代办已创建' : '代办已更新',
     })
     if (!next) {
       return
     }
 
-    setManageProjectId(todoForm.projectId)
-    if (selectedProject?.id === todoForm.projectId || !selectedProject) {
-      setSelectedProjectId(todoForm.projectId)
+    setManageProjectId(nextDraft.projectId)
+    if (selectedProject?.id === nextDraft.projectId || !selectedProject) {
+      setSelectedProjectId(nextDraft.projectId)
     }
-    if (!todoForm.id) {
+    if (!nextDraft.id) {
       setSelectedTodoId(next.todos[0]?.id ?? null)
     }
     setTodoEditorOpen(false)
@@ -1233,19 +1274,11 @@ function App() {
 
   const completeTodo = async (todo: Todo) => {
     await syncSnapshot(
-      saveTodo({
-        id: todo.id,
-        projectId: todo.projectId,
-        title: todo.title,
-        quickStartStep: todo.quickStartStep,
-        description: todo.description,
-        notes: todo.notes,
-        status: 'done',
-        priority: todo.priority,
-        estimatedPomodoros: todo.estimatedPomodoros,
-        dueDate: todo.dueDate,
-        isToday: todo.isToday,
-      }),
+      saveTodo(
+        buildTodoDraftFromTodo(todo, {
+          status: 'done',
+        }),
+      ),
       { message: '代办已完成' },
     )
   }
@@ -1503,19 +1536,11 @@ function App() {
     }
 
     await syncSnapshot(
-      saveTodo({
-        id: selectedTodo.id,
-        projectId: selectedTodo.projectId,
-        title: selectedTodo.title,
-        quickStartStep: selectedTodo.quickStartStep,
-        description: selectedTodo.description,
-        notes: selectedTodo.notes,
-        status: selectedTodo.status,
-        priority: selectedTodo.priority,
-        estimatedPomodoros: nextEstimated,
-        dueDate: selectedTodo.dueDate,
-        isToday: selectedTodo.isToday,
-      }),
+      saveTodo(
+        buildTodoDraftFromTodo(selectedTodo, {
+          estimatedPomodoros: nextEstimated,
+        }),
+      ),
       { message: '番茄数已更新', silent: true },
     )
   }
@@ -1609,6 +1634,78 @@ function App() {
     }, 0)
   }
 
+  const handleAdvanceTodoStep = async () => {
+    if (!selectedTodo || !selectedTodoSteps.length) {
+      return
+    }
+
+    const nextIndex = Math.min(selectedTodo.currentStepIndex + 1, selectedTodoSteps.length - 1)
+    if (nextIndex === selectedTodo.currentStepIndex) {
+      return
+    }
+
+    await syncSnapshot(
+      saveTodo(
+        buildTodoDraftFromTodo(selectedTodo, {
+          currentStepIndex: nextIndex,
+        }),
+      ),
+      { message: '已推进到下一步', silent: true },
+    )
+  }
+
+  const handleRewindTodoStep = async () => {
+    if (!selectedTodo || !selectedTodoSteps.length) {
+      return
+    }
+
+    const nextIndex = Math.max(selectedTodo.currentStepIndex - 1, 0)
+    if (nextIndex === selectedTodo.currentStepIndex) {
+      return
+    }
+
+    await syncSnapshot(
+      saveTodo(
+        buildTodoDraftFromTodo(selectedTodo, {
+          currentStepIndex: nextIndex,
+        }),
+      ),
+      { message: '已退回上一步', silent: true },
+    )
+  }
+
+  const handleUseContinuationAsSteps = async () => {
+    if (!selectedTodo || !focusContinuationSuggestion) {
+      return
+    }
+
+    const nextQuickStartStep = focusContinuationQuickStartDraft.trim()
+    const nextSteps = focusContinuationDraft.map((step) => step.trim()).filter(Boolean)
+    if (!nextQuickStartStep) {
+      setError('先确认最简启动步骤')
+      return
+    }
+    if (!nextSteps.length) {
+      setError('AI 还没有给出可用的后续步骤')
+      return
+    }
+
+    const next = await syncSnapshot(
+      saveTodo(
+        buildTodoDraftFromTodo(selectedTodo, {
+          quickStartStep: nextQuickStartStep,
+          steps: nextSteps,
+          currentStepIndex: 0,
+        }),
+      ),
+      { message: '已将 AI 推进建议写回当前任务' },
+    )
+
+    if (next) {
+      setFocusContinuationSuggestion(null)
+    }
+  }
+
   const renderLaunchContextBody = () => {
     if (!hasLaunchContextSteps) {
       return <p className="focus-kickoff__context-fallback">{launchContextItems[0]}</p>
@@ -1616,14 +1713,23 @@ function App() {
 
     return (
       <ol className="focus-kickoff__context-content">
-        {launchContextItems.map((step, index) => (
-          <li key={`${index + 1}-${step}`} className="focus-kickoff__context-step">
-            <span className="focus-kickoff__context-number" aria-hidden="true">
-              {index + 1}.
-            </span>
-            <p className="focus-kickoff__context-text">{step}</p>
-          </li>
-        ))}
+        {launchContextItems.map((step, index) => {
+          const stateClassName =
+            index < selectedTodoCurrentStepIndex
+              ? 'focus-kickoff__context-step is-complete'
+              : index === selectedTodoCurrentStepIndex
+                ? 'focus-kickoff__context-step is-current'
+                : 'focus-kickoff__context-step'
+
+          return (
+            <li key={`${index + 1}-${step}`} className={stateClassName}>
+              <span className="focus-kickoff__context-number" aria-hidden="true">
+                {index + 1}.
+              </span>
+              <p className="focus-kickoff__context-text">{step}</p>
+            </li>
+          )
+        })}
       </ol>
     )
   }
@@ -1714,26 +1820,15 @@ function App() {
                       <section className="focus-kickoff__section focus-kickoff__section--brief focus-kickoff__section--primary">
                         <div className="focus-kickoff__section-copy">
                           <span className="eyebrow">当前任务</span>
-                          <h4>现在开始这件事</h4>
+                          <h4>开始这一轮专注</h4>
                         </div>
-                        <div className="focus-kickoff__hero-meta">
-                          <span className="eyebrow">{focusSuggestion.isResume ? '优先续上' : '现在开工'}</span>
+                        <div className="focus-kickoff__hero-head">
+                          <h3>{selectedTodo.title}</h3>
                           <div className="focus-kickoff__pills">
                             {selectedTodo.isToday ? <span className="info-pill">今日清单</span> : null}
                             <span className="info-pill">{selectedTodo.dueDate ?? '未排期'}</span>
                           </div>
                         </div>
-                        <div className="focus-kickoff__hero-head">
-                          <h3>{selectedTodo.title}</h3>
-                          <span
-                            className={
-                              focusSuggestion.isResume ? 'status-pill status-pill--done' : 'status-pill status-pill--todo'
-                            }
-                          >
-                            {focusSuggestion.isResume ? '建议续上' : '建议启动'}
-                          </span>
-                        </div>
-                        <p className="focus-kickoff__hero-summary">{focusSuggestion.reason}</p>
 
                         <div className="focus-kickoff__metrics" aria-label="番茄指标">
                           <article className="focus-kickoff__metric focus-kickoff__metric--planned">
@@ -1753,9 +1848,46 @@ function App() {
                         </div>
 
                         <article className="focus-kickoff__card focus-kickoff__card--primary">
-                          <span>现在先做</span>
-                          <strong>{selectedTodo.quickStartStep || '还没有最简启动步骤'}</strong>
+                          <span>当前下一步</span>
+                          <strong>{selectedTodoCurrentStep}</strong>
+                          {selectedTodoUpcomingSteps.length ? (
+                            <p>接下来：{selectedTodoUpcomingSteps.join(' · ')}</p>
+                          ) : selectedTodoSteps.length > 1 ? (
+                            <p>这是当前任务的最后一步，完成后就可以收尾或复盘了。</p>
+                          ) : (
+                            <p>还没有拆出更多步骤，先开始这一轮，结束后再补后续推进也可以。</p>
+                          )}
                         </article>
+
+                        <div className="focus-kickoff__primary-actions">
+                          <button
+                            type="button"
+                            className="action-button action-button--primary"
+                            onClick={() => void startActivationRun()}
+                            disabled={!selectedTodo || focusInteractionLocked}
+                          >
+                            先启动 5 分钟
+                          </button>
+                          <button
+                            type="button"
+                            className="action-button"
+                            onClick={() => void startFocusRun()}
+                            disabled={!selectedTodo || focusInteractionLocked}
+                          >
+                            {kickoffPrimaryLabel}
+                          </button>
+                          <button
+                            type="button"
+                            className="action-button action-button--compact"
+                            onClick={() => void handleAdvanceTodoStep()}
+                            disabled={
+                              !selectedTodoSteps.length ||
+                              selectedTodoCurrentStepIndex >= selectedTodoSteps.length - 1
+                            }
+                          >
+                            完成当前步
+                          </button>
+                        </div>
 
                         <div
                           className={
@@ -1785,29 +1917,9 @@ function App() {
                           ) : null}
                         </div>
 
-                        <div className="focus-kickoff__primary-actions">
-                          <button
-                            type="button"
-                            className="action-button action-button--primary"
-                            onClick={() => void startActivationRun()}
-                            disabled={!selectedTodo || focusInteractionLocked}
-                          >
-                            先做 5 分钟
-                          </button>
-                          <button
-                            type="button"
-                            className="action-button"
-                            onClick={() => void startFocusRun()}
-                            disabled={!selectedTodo || focusInteractionLocked}
-                          >
-                            {kickoffPrimaryLabel}
-                          </button>
-                        </div>
-
                         <div className="focus-kickoff__more-bar">
                           <div className="focus-kickoff__more-copy">
                             <span className="info-pill">更多设置 / 求助 / 复盘</span>
-                            <p>设置、卡住求助和复盘先收起来，需要时再展开。</p>
                           </div>
                           <button
                             type="button"
@@ -1832,60 +1944,123 @@ function App() {
                             <div className="focus-kickoff__section-head launch-more-panel__intro">
                               <div className="focus-kickoff__section-copy">
                                 <span className="eyebrow">更多选项</span>
-                                <h4>需要时再展开这些辅助信息</h4>
+                                <h4>只在需要时再展开</h4>
                               </div>
-                              <p>把番茄数、卡住求助和结束后复盘收进这里，首屏只保留开始动作。</p>
+                              <p>把步骤管理、计划番茄、卡住求助和复盘都收进这里。</p>
                             </div>
 
                             <article className="focus-kickoff__utility-row">
                               <div className="focus-kickoff__utility-copy">
-                                <span className="eyebrow">计划番茄数</span>
-                                <h4>开始后还可以再改</h4>
-                                <p>把这一轮预估放在次级区域，避免首屏被设置项打断。</p>
+                                <span className="eyebrow">步骤管理</span>
+                                <h4>{launchManageOpen ? '步骤管理已展开' : '编辑步骤与番茄'}</h4>
+                                <p>需要时再展开，避免抽屉一打开就堆满按钮和输入框。</p>
                               </div>
-                              <label className="focus-kickoff__plan-field">
-                                <input
-                                  type="number"
-                                  min={1}
-                                  max={20}
-                                  value={plannedPomodoros}
-                                  disabled={focusInteractionLocked}
-                                  onChange={(event) =>
-                                    setPlannedPomodoros(Math.max(1, Math.min(20, Number(event.target.value) || 1)))
+                              <div className="focus-kickoff__utility-actions focus-kickoff__utility-actions--step-management">
+                                <button
+                                  type="button"
+                                  className={
+                                    launchManageOpen
+                                      ? 'action-button action-button--compact'
+                                      : 'action-button action-button--compact action-button--primary'
                                   }
-                                  onBlur={() => void handlePlannedPomodorosSave()}
-                                />
-                                <small>个番茄</small>
-                              </label>
+                                  onClick={() => setLaunchManageOpen((current) => !current)}
+                                  aria-expanded={launchManageOpen}
+                                >
+                                  {launchManageOpen ? '收起管理' : '打开管理'}
+                                </button>
+                              </div>
                             </article>
+
+                            {launchManageOpen ? (
+                              <div className="focus-kickoff__utility-detail focus-kickoff__utility-detail--stacked">
+                                <article className="focus-kickoff__utility-row focus-kickoff__utility-row--nested">
+                                  <div className="focus-kickoff__utility-copy">
+                                    <span className="eyebrow">步骤操作</span>
+                                    <h4>回退或进入编辑</h4>
+                                  </div>
+                                  <div className="focus-kickoff__utility-actions focus-kickoff__utility-actions--step-management">
+                                    <button
+                                      type="button"
+                                      className="action-button action-button--compact action-button--ghost"
+                                      onClick={() => void handleRewindTodoStep()}
+                                      disabled={!selectedTodoSteps.length || selectedTodoCurrentStepIndex === 0}
+                                    >
+                                      回退一步
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="action-button action-button--compact"
+                                      onClick={() => {
+                                        closeLaunchMorePanel()
+                                        openTodoEditor(selectedTodo)
+                                      }}
+                                      disabled={!selectedTodo}
+                                    >
+                                      编辑步骤
+                                    </button>
+                                  </div>
+                                </article>
+
+                                <article className="focus-kickoff__utility-row focus-kickoff__utility-row--nested">
+                                  <div className="focus-kickoff__utility-copy">
+                                    <span className="eyebrow">计划番茄数</span>
+                                    <h4>计划番茄</h4>
+                                  </div>
+                                  <label className="focus-kickoff__plan-field">
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      max={20}
+                                      value={plannedPomodoros}
+                                      disabled={focusInteractionLocked}
+                                      onChange={(event) =>
+                                        setPlannedPomodoros(Math.max(1, Math.min(20, Number(event.target.value) || 1)))
+                                      }
+                                      onBlur={() => void handlePlannedPomodorosSave()}
+                                    />
+                                    <small>个番茄</small>
+                                  </label>
+                                </article>
+                              </div>
+                            ) : null}
 
                             <article className="focus-kickoff__utility-row">
                               <div className="focus-kickoff__utility-copy">
                                 <span className="eyebrow">卡住时</span>
-                                <h4>{todoActivationRelief ? '换个原因再让 AI 拆一步' : '真的卡住时再让 AI 拆下一步'}</h4>
+                                <h4>{activationAssistOpen || todoActivationRelief ? 'AI 求助已展开' : '卡住时再求助'}</h4>
                                 <p>
-                                  {activationAssistOpen
-                                    ? '先选一个最接近现在状态的原因，AI 会按这个入口重写启动动作。'
-                                    : todoActivationRelief
-                                      ? '已经有一版建议了，需要时再换个原因重拆。'
-                                      : '先把这一轮启动起来，只有真的卡住时再回来展开原因。'}
+                                  {activationAssistOpen || todoActivationRelief
+                                    ? '先选原因，再决定是否应用这版建议。'
+                                    : '默认收起，只有真的卡住时再回来展开。'}
                                 </p>
                               </div>
-                              <button
-                                type="button"
-                                className="action-button action-button--assist"
-                                onClick={() => setActivationAssistOpen((current) => !current)}
-                                disabled={!selectedTodo || focusInteractionLocked || activationAiGenerating}
-                                aria-expanded={activationAssistOpen}
-                              >
-                                {activationAiGenerating
-                                  ? 'AI 正在拆解...'
-                                  : activationAssistOpen
-                                    ? '收起原因选项'
-                                    : todoActivationRelief
-                                      ? '换个原因再拆一步'
-                                      : '我卡住了，帮我拆一步'}
-                              </button>
+                              <div className="focus-kickoff__utility-actions">
+                                <button
+                                  type="button"
+                                  className={
+                                    activationAssistOpen || todoActivationRelief
+                                      ? 'action-button action-button--compact'
+                                      : 'action-button action-button--compact action-button--primary'
+                                  }
+                                  onClick={() => {
+                                    if (activationAssistOpen || todoActivationRelief) {
+                                      setActivationAssistOpen(false)
+                                      setTodoActivationRelief(null)
+                                      setActivationReliefHelpful(false)
+                                      return
+                                    }
+                                    setActivationAssistOpen(true)
+                                  }}
+                                  disabled={!selectedTodo || focusInteractionLocked || activationAiGenerating}
+                                  aria-expanded={activationAssistOpen || Boolean(todoActivationRelief)}
+                                >
+                                  {activationAiGenerating
+                                    ? 'AI 生成中...'
+                                    : activationAssistOpen || todoActivationRelief
+                                      ? '收起求助'
+                                      : '打开求助'}
+                                </button>
+                              </div>
                             </article>
 
                             {activationAssistOpen ? (
@@ -2008,21 +2183,25 @@ function App() {
 
                             <article className="focus-kickoff__utility-row focus-kickoff__utility-row--review">
                               <div className="focus-kickoff__utility-copy">
-                            <span className="eyebrow">结束后复盘</span>
-                            <h4>这一轮结束后再补结果</h4>
-                            <p>默认收起，需要时再展开完整复盘和 AI 续写。</p>
+                                <span className="eyebrow">结束后复盘</span>
+                                <h4>{focusFeedbackOpen ? '复盘 / 续写已展开' : '结束后复盘'}</h4>
+                                <p>{focusFeedbackOpen ? '先补三栏，再决定要不要生成 AI 续写。' : '默认收起，需要时再展开完整复盘和 AI 续写。'}</p>
                               </div>
                               <div className="focus-kickoff__utility-actions">
-                            <button
-                              type="button"
-                              className={focusFeedbackOpen ? 'action-button' : 'action-button action-button--primary'}
-                              onClick={() => {
-                                setFocusFeedbackOpen((current) => !current)
-                                setFocusFeedbackCollapsed(false)
-                              }}
-                            >
-                              {focusFeedbackOpen ? '收起完整复盘' : '打开完整复盘'}
-                            </button>
+                                <button
+                                  type="button"
+                                  className={
+                                    focusFeedbackOpen
+                                      ? 'action-button action-button--compact'
+                                      : 'action-button action-button--compact action-button--primary'
+                                  }
+                                  onClick={() => {
+                                    setFocusFeedbackOpen((current) => !current)
+                                    setFocusFeedbackCollapsed(false)
+                                  }}
+                                >
+                                  {focusFeedbackOpen ? '收起复盘' : '打开复盘'}
+                                </button>
                               </div>
                             </article>
 
@@ -2128,20 +2307,35 @@ function App() {
                               <div className="focus-continuation-card">
                                 <section className="focus-continuation-card__section">
                                   <span>最简启动步骤</span>
-                                  <p>{focusContinuationSuggestion.quickStartStep}</p>
+                                  <textarea
+                                    rows={2}
+                                    value={focusContinuationQuickStartDraft}
+                                    onChange={(event) => setFocusContinuationQuickStartDraft(event.target.value)}
+                                    placeholder="先确认这一轮最容易开始的动作"
+                                  ></textarea>
                                 </section>
                                 <section className="focus-continuation-card__section">
                                   <span>后续推进步骤</span>
-                                  <ul>
-                                    {focusContinuationSuggestion.nextSteps.map((step) => (
-                                      <li key={step}>{step}</li>
-                                    ))}
-                                  </ul>
+                                  <textarea
+                                    rows={Math.max(3, focusContinuationDraft.length || 3)}
+                                    value={focusContinuationDraft.join('\n')}
+                                    onChange={(event) => setFocusContinuationDraft(parseTodoSteps(event.target.value))}
+                                    placeholder="一行一步，先改成你认可的版本再应用"
+                                  ></textarea>
                                 </section>
                                 <section className="focus-continuation-card__section">
                                   <span>再次卡住时</span>
                                   <p>{focusContinuationSuggestion.fallbackStep}</p>
                                 </section>
+                                <div className="focus-kickoff__step-actions focus-kickoff__step-actions--continuation">
+                                  <button
+                                    type="button"
+                                    className="action-button action-button--compact"
+                                    onClick={() => void handleUseContinuationAsSteps()}
+                                  >
+                                    写回任务
+                                  </button>
+                                </div>
                               </div>
                             ) : null}
                               </article>
@@ -2165,10 +2359,11 @@ function App() {
                   </button>
                 }
               >
-                <div className="support-panel">
+                <div className="support-panel support-panel--timer">
                   <div className="support-timer">
                     <div className="support-timer__head">
                       <div className="support-timer__title">
+                        <span className="eyebrow">{supportTimerStatusLabel}</span>
                         <h3>{supportTimerTodo?.title ?? '准备选择一条任务'}</h3>
                       </div>
                     </div>
@@ -2185,54 +2380,53 @@ function App() {
                       </div>
                     </div>
 
-                  </div>
-
-                  {activationSession.todoId ? (
-                    <div className="timer-actions timer-actions--inline">
-                      <button
-                        type="button"
-                        className="action-button action-button--primary"
-                        onClick={handleToggleActivationRun}
-                      >
-                        {activationSession.running ? '暂停开工' : '继续开工'}
-                      </button>
-                      <button
-                        type="button"
-                        className="action-button action-button--ghost"
-                        onClick={handleStopActivationRun}
-                      >
-                        停止
-                      </button>
-                    </div>
-                  ) : timer.phase !== 'idle' ? (
-                    <div className="timer-actions timer-actions--inline">
-                      <button
-                        type="button"
-                        className="action-button action-button--primary"
-                        onClick={() => setTimer((current) => ({ ...current, running: !current.running }))}
-                      >
-                        {timer.running ? '暂停' : '继续'}
-                      </button>
-                      <button
-                        type="button"
-                        className="action-button action-button--ghost"
-                        onClick={() => void handleInterrupt()}
-                      >
-                        终止
-                      </button>
-                      {timer.phase !== 'focus' ? (
-                        <button type="button" className="action-button" onClick={() => void handleSkipBreak()}>
-                          跳过休息
+                    {activationSession.todoId ? (
+                      <div className="timer-actions timer-actions--inline">
+                        <button
+                          type="button"
+                          className="action-button action-button--primary"
+                          onClick={handleToggleActivationRun}
+                        >
+                          {activationSession.running ? '暂停开工' : '继续开工'}
                         </button>
-                      ) : null}
-                    </div>
-                  ) : null}
+                        <button
+                          type="button"
+                          className="action-button action-button--ghost"
+                          onClick={handleStopActivationRun}
+                        >
+                          停止
+                        </button>
+                      </div>
+                    ) : timer.phase !== 'idle' ? (
+                      <div className="timer-actions timer-actions--inline">
+                        <button
+                          type="button"
+                          className="action-button action-button--primary"
+                          onClick={() => setTimer((current) => ({ ...current, running: !current.running }))}
+                        >
+                          {timer.running ? '暂停' : '继续'}
+                        </button>
+                        <button
+                          type="button"
+                          className="action-button action-button--ghost"
+                          onClick={() => void handleInterrupt()}
+                        >
+                          终止
+                        </button>
+                        {timer.phase !== 'focus' ? (
+                          <button type="button" className="action-button" onClick={() => void handleSkipBreak()}>
+                            跳过休息
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
 
                 {focusQueue.length ? (
-                  <div className="support-panel">
+                  <div className="support-panel support-panel--queue">
                     <div className="focus-queue__head">
-                      <h4>切换任务</h4>
+                      <h4>待切换任务</h4>
                     </div>
                     <div className="focus-queue__list">
                       {focusQueue.map((todo) => (
@@ -3283,17 +3477,94 @@ function App() {
               />
             </label>
 
-            <label className="field">
-              <span>后续步骤</span>
-              <textarea
-                rows={3}
-                value={todoForm.description}
-                onChange={(event) => setTodoForm({ ...todoForm, description: event.target.value })}
-                placeholder="补充后续推进步骤"
-              ></textarea>
-            </label>
+              <label className="field">
+                <span>步骤列表</span>
+                <textarea
+                  rows={4}
+                  value={todoFormStepsText}
+                  onChange={(event) => {
+                    const nextSteps = parseTodoSteps(event.target.value)
+                    setTodoForm({
+                      ...todoForm,
+                      steps: nextSteps,
+                      currentStepIndex: Math.min(todoForm.currentStepIndex, Math.max(nextSteps.length - 1, 0)),
+                    })
+                  }}
+                  placeholder="一行一步，例如：&#10;打开当前文件&#10;列出 3 个子任务&#10;先完成第 1 个"
+                ></textarea>
+              </label>
+
+              <label className="field">
+                <span>补充说明</span>
+                <textarea
+                  rows={3}
+                  value={todoForm.description}
+                  onChange={(event) => {
+                    const nextDescription = event.target.value
+                    setTodoForm({
+                      ...todoForm,
+                      description: nextDescription,
+                    })
+                  }}
+                  placeholder="记录背景、限制条件、补充提示；不会自动改写步骤列表"
+                ></textarea>
+              </label>
 
             <div className="modal-form__row modal-form__row--todo">
+              <label className="field field--compact">
+                <span>当前步骤</span>
+                <select
+                  value={todoForm.currentStepIndex}
+                  onChange={(event) =>
+                    setTodoForm({
+                      ...todoForm,
+                      currentStepIndex: Math.max(0, Number(event.target.value) || 0),
+                    })
+                  }
+                  disabled={!todoForm.steps.length}
+                >
+                  {!todoForm.steps.length ? <option value={0}>暂无步骤</option> : null}
+                  {todoForm.steps.map((step, index) => (
+                    <option key={`${index + 1}-${step}`} value={index}>
+                      {`第 ${index + 1} 步：${step.slice(0, 18)}${step.length > 18 ? '…' : ''}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="field field--compact field--step-action">
+                <span>步骤操作</span>
+                <button
+                  type="button"
+                  className="action-button action-button--ghost"
+                  onClick={() => {
+                    const currentStep = todoForm.steps[todoForm.currentStepIndex] ?? ''
+                    setTodoForm({
+                      ...todoForm,
+                      quickStartStep: currentStep || todoForm.quickStartStep,
+                    })
+                  }}
+                  disabled={!todoForm.steps.length}
+                >
+                  同步为最简启动
+                </button>
+                <button
+                  type="button"
+                  className="action-button action-button--ghost"
+                  onClick={() => {
+                    const nextSteps = todoForm.steps.filter((_, index) => index !== todoForm.currentStepIndex)
+                    setTodoForm({
+                      ...todoForm,
+                      steps: nextSteps,
+                      currentStepIndex: Math.max(0, Math.min(todoForm.currentStepIndex, nextSteps.length - 1)),
+                    })
+                  }}
+                  disabled={!todoForm.steps.length}
+                >
+                  删除当前步骤
+                </button>
+              </div>
+
               <label className="field">
                 <span>状态</span>
                 <select
@@ -3669,32 +3940,6 @@ function focusSessionResultTone(result: SessionResult): 'todo' | 'done' | 'cance
     case 'skipped':
       return 'todo'
   }
-}
-
-function parseStepItems(value: string): string[] {
-  const normalized = value.trim()
-  if (!normalized) {
-    return []
-  }
-
-  const lineItems = normalized
-    .split(/\r?\n+/)
-    .map((item) => item.replace(/^[\s\-*•\d.、)]+/, '').trim())
-    .filter(Boolean)
-  if (lineItems.length > 1) {
-    return lineItems
-  }
-
-  const numberedItems = Array.from(
-    normalized.matchAll(/(?:^|\s)\d+[.)、]\s*([^]+?)(?=(?:\s+\d+[.)、]\s)|$)/g),
-  )
-    .map((match) => match[1]?.trim() ?? '')
-    .filter(Boolean)
-  if (numberedItems.length > 1) {
-    return numberedItems
-  }
-
-  return [normalized.replace(/\s+/g, ' ')]
 }
 
 function clampNumber(value: string, min: number, max: number): number {
