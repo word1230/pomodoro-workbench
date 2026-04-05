@@ -37,8 +37,8 @@ pub struct Todo {
 #[serde(rename_all = "camelCase")]
 pub struct FocusSession {
     pub id: String,
-    pub project_id: String,
-    pub todo_id: String,
+    pub project_id: Option<String>,
+    pub todo_id: Option<String>,
     pub r#type: String,
     pub planned_duration_sec: i64,
     pub actual_duration_sec: i64,
@@ -51,6 +51,42 @@ pub struct FocusSession {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
+    pub focus_minutes: i64,
+    pub short_break_minutes: i64,
+    pub long_break_minutes: i64,
+    pub long_break_interval: i64,
+    pub auto_start_breaks: bool,
+    pub auto_start_focus: bool,
+    pub notifications_enabled: bool,
+    pub minimize_to_tray: bool,
+    pub launch_on_startup: bool,
+    pub sound_enabled: bool,
+    pub ai_base_url: String,
+    pub ai_api_key_configured: bool,
+    pub ai_model_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InternalAppSettings {
+    pub focus_minutes: i64,
+    pub short_break_minutes: i64,
+    pub long_break_minutes: i64,
+    pub long_break_interval: i64,
+    pub auto_start_breaks: bool,
+    pub auto_start_focus: bool,
+    pub notifications_enabled: bool,
+    pub minimize_to_tray: bool,
+    pub launch_on_startup: bool,
+    pub sound_enabled: bool,
+    pub ai_base_url: String,
+    pub ai_api_key: String,
+    pub ai_model_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveAppSettingsInput {
     pub focus_minutes: i64,
     pub short_break_minutes: i64,
     pub long_break_minutes: i64,
@@ -106,8 +142,8 @@ pub struct TodoDraft {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FocusSessionDraft {
-    pub project_id: String,
-    pub todo_id: String,
+    pub project_id: Option<String>,
+    pub todo_id: Option<String>,
     pub r#type: String,
     pub planned_duration_sec: i64,
     pub actual_duration_sec: i64,

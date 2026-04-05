@@ -23,15 +23,6 @@ export function getAiReviewEligibility(
     }
   }
 
-  const scopeTodos = snapshot.todos.filter((todo) => (projectId ? todo.projectId === projectId : true))
-  if (!scopeTodos.length) {
-    return {
-      canGenerate: false,
-      reason: '当前范围内还没有可复盘的任务数据',
-      focusCount: scopeSessions.length,
-    }
-  }
-
   return {
     canGenerate: true,
     reason: null,
@@ -69,8 +60,8 @@ function filterRecentCompletedFocusSessions(
   projectId: string | null,
   now: Date,
 ): FocusSession[] {
-  const windowStart = new Date(now)
-  windowStart.setDate(windowStart.getDate() - 7)
+  const windowEnd = endOfLocalDay(now)
+  const windowStart = startOfLocalDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6))
 
   return sessions.filter((session) => {
     if (session.type !== 'focus' || session.result !== 'completed') {
@@ -79,7 +70,32 @@ function filterRecentCompletedFocusSessions(
     if (projectId && session.projectId !== projectId) {
       return false
     }
-    const startedAt = new Date(session.startedAt)
-    return !Number.isNaN(startedAt.getTime()) && startedAt >= windowStart
+
+    const completedAt = getCompletedAt(session)
+    return completedAt !== null && completedAt >= windowStart && completedAt <= windowEnd
   })
+}
+
+function startOfLocalDay(value: Date): Date {
+  return new Date(value.getFullYear(), value.getMonth(), value.getDate(), 0, 0, 0, 0)
+}
+
+function endOfLocalDay(value: Date): Date {
+  return new Date(value.getFullYear(), value.getMonth(), value.getDate(), 23, 59, 59, 999)
+}
+
+function getCompletedAt(session: FocusSession): Date | null {
+  if (session.endedAt !== null) {
+    const endedAt = new Date(session.endedAt)
+    if (!Number.isNaN(endedAt.getTime())) {
+      return endedAt
+    }
+  }
+
+  const startedAt = new Date(session.startedAt)
+  if (!Number.isNaN(startedAt.getTime())) {
+    return startedAt
+  }
+
+  return null
 }

@@ -1,0 +1,25 @@
+✔ hasAiCompletionConfig requires base url, configured api key and model id (2.4183ms)
+✔ save settings payload can carry a replacement API key without exposing it in public settings (0.1468ms)
+✔ getEnhanceableTodos only includes todo and in-progress items from the target project (0.7766ms)
+✔ pruneSelectedTodoIds removes ids that are no longer eligible (0.2053ms)
+✔ buildTodoAiApplyDrafts preserves non-description fields while applying AI suggestions (0.802ms)
+✔ buildTodoAiApplyDrafts rejects stale previews when todo content changed after generation (0.5264ms)
+✔ buildTodoAiApplyDrafts refreshes stale derived steps from the AI-updated description (0.5187ms)
+✔ buildTodoAiApplyDrafts preserves explicit custom steps when applying AI suggestions (0.1845ms)
+✔ buildTodoAiApplyDrafts preserves current step progress when applying AI suggestions (0.1622ms)
+✔ buildTodoAiApplyDrafts rejects missing or duplicated todo suggestions (0.3522ms)
+✔ mergeActivationFallback keeps fallback as the first actionable line (0.4409ms)
+✔ buildTodoActivationReliefDraft rejects fallback steps that only contain the blocker prefix (0.3899ms)
+✔ buildTodoActivationReliefDraft rejects stale relief when todo content changed after generation (0.1379ms)
+✔ buildTodoActivationReliefDraft updates quick start and aligned follow-up steps (0.2663ms)
+✔ buildTodoActivationReliefDraft preserves derived current step when fallback prepends description-only first step (0.2649ms)
+✔ shouldApplyActivationReliefResult only accepts results for the same selected todo (0.1302ms)
+✔ shouldApplyActivationReliefResult rejects stale request ids even when todo ids still match (0.08ms)
+ℹ tests 17
+ℹ suites 0
+ℹ pass 17
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 195.6178

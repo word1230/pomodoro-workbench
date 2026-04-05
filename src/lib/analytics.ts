@@ -91,19 +91,23 @@ export function sortTodosForFocus(todos: Todo[]): Todo[] {
 
 export function buildAnalytics(snapshot: AppSnapshot): AnalyticsBundle {
   const completedFocusSessions = snapshot.sessions.filter(
-    (session) => session.type === 'focus' && session.result === 'completed',
+    (session): session is Extract<FocusSession, { type: 'focus' }> =>
+      session.type === 'focus' && session.result === 'completed',
   )
   const interruptedFocusSessions = snapshot.sessions.filter(
-    (session) => session.type === 'focus' && session.result === 'interrupted',
+    (session): session is Extract<FocusSession, { type: 'focus' }> =>
+      session.type === 'focus' && session.result === 'interrupted',
   )
   const todayKey = toDateKey(new Date())
   const todayFocusSessions = completedFocusSessions.filter(
-    (session) => toDateKey(session.startedAt) === todayKey,
+    (session) => getCompletedFocusDateKey(session) === todayKey,
   )
   const last7Keys = getTrailingDateKeys(7)
   const last30Keys = new Set(getTrailingDateKeys(30))
   const dailyTrend = last7Keys.map((dateKey) => {
-    const matches = completedFocusSessions.filter((session) => toDateKey(session.startedAt) === dateKey)
+    const matches = completedFocusSessions.filter(
+      (session) => getCompletedFocusDateKey(session) === dateKey,
+    )
     return {
       dateKey,
       label: formatTrendLabel(dateKey),
@@ -130,10 +134,10 @@ export function buildAnalytics(snapshot: AppSnapshot): AnalyticsBundle {
     .sort((left, right) => right.focusDurationSec - left.focusDurationSec)
 
   const weekFocusSessions = completedFocusSessions.filter((session) =>
-    last7Keys.includes(toDateKey(session.startedAt)),
+    last7Keys.includes(getCompletedFocusDateKey(session)),
   )
   const monthFocusSessions = completedFocusSessions.filter((session) =>
-    last30Keys.has(toDateKey(session.startedAt)),
+    last30Keys.has(getCompletedFocusDateKey(session)),
   )
   const weekInterruptCount = interruptedFocusSessions.filter((session) =>
     last7Keys.includes(toDateKey(session.startedAt)),
@@ -203,6 +207,19 @@ function formatTrendLabel(dateKey: string): string {
     month: 'numeric',
     day: 'numeric',
   }).format(new Date(year, month - 1, day))
+}
+
+function getCompletedFocusDateKey(session: FocusSession): string {
+  const endedAtKey = toValidDateKey(session.endedAt)
+  return endedAtKey ?? toDateKey(session.startedAt)
+}
+
+function toValidDateKey(value: string | Date | null): string | null {
+  if (!value) {
+    return null
+  }
+  const date = value instanceof Date ? value : new Date(value)
+  return Number.isNaN(date.getTime()) ? null : toDateKey(date)
 }
 
 function toDateKey(value: string | Date): string {

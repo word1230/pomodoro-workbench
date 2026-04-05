@@ -24,7 +24,16 @@ test('formatSessionGroupLabel keeps the year for non-relative dates', () => {
   )
 })
 
+test('formatSessionGroupLabel parses bare dates in local time', () => {
+  assert.equal(formatSessionGroupLabel('2001-03-30'), '2001/3/30')
+})
+
+test('formatSessionGroupLabel parses early-year bare dates', () => {
+  assert.equal(formatSessionGroupLabel('0001-03-30'), '1/3/30')
+})
+
 test('formatSessionGroupLabel falls back instead of throwing on invalid dates', () => {
   assert.doesNotThrow(() => formatSessionGroupLabel('invalid'))
   assert.equal(formatSessionGroupLabel('invalid'), '未知日期')
+  assert.equal(formatSessionGroupLabel('2001-02-29'), '未知日期')
 })

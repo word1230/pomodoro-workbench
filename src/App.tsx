@@ -1,10 +1,12 @@
 import {
   type FormEvent,
+  type KeyboardEvent,
   type ReactNode,
   startTransition,
   useDeferredValue,
   useEffect,
   useEffectEvent,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -24,10 +26,11 @@ import {
   getActivationContinuationDurationSec,
   idleActivationSession,
   resolveNextActivationTick,
+  setActivationSessionRunning,
   shouldFinalizeActivationSession,
 } from './lib/activation-session'
 import { getFocusStartSuggestion, getFocusStartTodos } from './lib/focus-start'
-import { idleTimer, resolveNextTimerTick, shouldFinalizeTimerPhase } from './lib/timer-tick'
+import { idleTimer, resolveNextTimerTick, setTimerRunning, shouldFinalizeTimerPhase } from './lib/timer-tick'
 import {
   archiveProject,
   deleteProject,
@@ -65,6 +68,7 @@ import {
   getEnhanceableTodos,
   hasAiCompletionConfig,
   pruneSelectedTodoIds,
+  shouldApplyActivationReliefResult,
 } from './lib/todo-ai'
 import {
   buildTodoDraftFromTodo,
@@ -93,6 +97,7 @@ import type {
   Priority,
   Project,
   ProjectDraft,
+  SaveAppSettingsInput,
   SessionResult,
   TimerState,
   Todo,
@@ -103,10 +108,74 @@ import type {
   TodoStatus,
 } from './types'
 
+type LaunchMoreTab = 'steps' | 'assist' | 'review'
+type StatsPrimaryView = 'share' | 'review'
+
+const LAUNCH_MORE_TAB_GROUP_ID = 'launch-more'
+const STATS_ANALYSIS_TAB_GROUP_ID = 'stats-analysis'
+
+const buildTabId = (groupId: string, tabId: string) => `${groupId}-tab-${tabId}`
+const buildTabPanelId = (groupId: string, tabId: string) => `${groupId}-panel-${tabId}`
+
+const handleTabListKeyDown = <TabId extends string>(
+  event: KeyboardEvent<HTMLElement>,
+  options: readonly TabId[],
+  activeTab: TabId,
+  setActiveTab: (tab: TabId) => void,
+  groupId: string,
+) => {
+  if (!options.length) {
+    return
+  }
+
+  const currentIndex = options.indexOf(activeTab)
+  if (currentIndex === -1) {
+    return
+  }
+
+  let nextIndex: number | null = null
+
+  switch (event.key) {
+    case 'ArrowRight':
+      nextIndex = (currentIndex + 1) % options.length
+      break
+    case 'ArrowLeft':
+      nextIndex = (currentIndex - 1 + options.length) % options.length
+      break
+    case 'Home':
+      nextIndex = 0
+      break
+    case 'End':
+      nextIndex = options.length - 1
+      break
+    default:
+      return
+  }
+
+  if (nextIndex === null) {
+    return
+  }
+
+  event.preventDefault()
+  const nextTab = options[nextIndex]
+  setActiveTab(nextTab)
+
+  if (typeof document !== 'undefined') {
+    const nextElement = document.getElementById(buildTabId(groupId, nextTab))
+    nextElement?.focus()
+  }
+}
+
 const pageMeta: Array<{ id: PageId; label: string }> = [
   { id: 'focus', label: '专注' },
   { id: 'manage', label: '项目库' },
   { id: 'stats', label: '复盘' },
+]
+
+const launchMoreTabOptions: Array<{ id: LaunchMoreTab; label: string }> = [
+  { id: 'steps', label: '步骤' },
+  { id: 'assist', label: 'AI 求助' },
+  { id: 'review', label: '复盘' },
 ]
 
 const projectColorOptions = ['#0071E3', '#34A853', '#FF9500', '#FF3B30', '#AF52DE', '#111827']
@@ -164,7 +233,7 @@ function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [manageProjectId, setManageProjectId] = useState<string | null>(null)
   const [statsProjectId, setStatsProjectId] = useState<string | null>(null)
-  const [statsPrimaryView, setStatsPrimaryView] = useState<'share' | 'review'>('share')
+  const [statsPrimaryView, setStatsPrimaryView] = useState<StatsPrimaryView>('share')
   const [selectedTodoId, setSelectedTodoId] = useState<string | null>(null)
   const [plannedPomodoros, setPlannedPomodoros] = useState(1)
   const [timer, setTimer] = useState<TimerState>(idleTimer)
@@ -175,6 +244,7 @@ function App() {
   const [, setMessage] = useState<string | null>(null)
   const [phaseAlertPrompt, setPhaseAlertPrompt] = useState<PhaseAlertPrompt | null>(null)
   const [settingsDraft, setSettingsDraft] = useState<AppSettings | null>(null)
+  const [settingsApiKeyDraft, setSettingsApiKeyDraft] = useState('')
   const [projectPickerMode, setProjectPickerMode] = useState<'focus' | 'stats' | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [projectEditorOpen, setProjectEditorOpen] = useState(false)
@@ -204,19 +274,24 @@ function App() {
   const [focusContinuationDraft, setFocusContinuationDraft] = useState<string[]>([])
   const [focusContinuationQuickStartDraft, setFocusContinuationQuickStartDraft] = useState('')
   const [focusContinuationGenerating, setFocusContinuationGenerating] = useState(false)
-  const [focusFeedbackOpen, setFocusFeedbackOpen] = useState(false)
+  const [, setFocusFeedbackOpen] = useState(false)
   const [focusFeedbackCollapsed, setFocusFeedbackCollapsed] = useState(false)
   const [activationBlockReason, setActivationBlockReason] =
     useState<ActivationBlockReason>('unclear_start')
   const [todoActivationRelief, setTodoActivationRelief] = useState<TodoActivationRelief | null>(null)
   const [activationReliefHelpful, setActivationReliefHelpful] = useState(false)
   const [activationAiGenerating, setActivationAiGenerating] = useState(false)
-  const [activationAssistOpen, setActivationAssistOpen] = useState(false)
-  const [launchManageOpen, setLaunchManageOpen] = useState(false)
+  const [, setActivationAssistOpen] = useState(false)
+  const [, setLaunchManageOpen] = useState(false)
   const [launchDetailsOpen, setLaunchDetailsOpen] = useState(false)
   const [launchMoreOpen, setLaunchMoreOpen] = useState(false)
+  const [launchMoreTab, setLaunchMoreTab] = useState<LaunchMoreTab>('steps')
+  const launchMoreTabIds = useMemo<LaunchMoreTab[]>(() => launchMoreTabOptions.map((tab) => tab.id), [])
+  const statsPrimaryViewIds = useMemo<StatsPrimaryView[]>(() => ['share', 'review'], [])
   const [todoContextOpen, setTodoContextOpen] = useState(false)
   const focusFeedbackCardRef = useRef<HTMLDivElement | null>(null)
+  const activationReliefRequestIdRef = useRef(0)
+  const latestSelectedTodoIdRef = useRef<string | null>(null)
   const [projectForm, setProjectForm] = useState<ProjectDraft>({
     name: '',
     color: projectColorOptions[0],
@@ -294,6 +369,7 @@ function App() {
   const focusInteractionLocked =
     timer.phase !== 'idle' || Boolean(activationSession.todoId) || Boolean(activationDecisionTodoId)
   const aiConfigured = settingsDraft ? hasAiCompletionConfig(settingsDraft) : false
+  const aiConfiguredHint = settingsDraft?.aiApiKeyConfigured ? '已保存本机密钥，留空则保持不变' : '尚未保存密钥'
   const aiReviewEligibility = snapshot
     ? getAiReviewEligibility(snapshot, statsProject?.id ?? null)
     : { canGenerate: false, reason: '正在装载统计数据', focusCount: 0 }
@@ -331,7 +407,9 @@ function App() {
               settings: snapshot.settings,
               projects: snapshot.projects.filter((project) => project.id === statsProjectId),
               todos: snapshot.todos.filter((todo) => todo.projectId === statsProjectId),
-              sessions: snapshot.sessions.filter((session) => session.projectId === statsProjectId),
+              sessions: snapshot.sessions.filter(
+                (session) => session.type === 'focus' && session.projectId === statsProjectId,
+              ),
             }
           : snapshot
         : null,
@@ -382,7 +460,7 @@ function App() {
 
     const recentSessions = snapshot.sessions
       .filter(
-        (session) =>
+        (session): session is Extract<(typeof snapshot.sessions)[number], { type: 'focus' }> =>
           session.type === 'focus' &&
           (session.result === 'completed' || session.result === 'interrupted'),
       )
@@ -465,6 +543,7 @@ function App() {
     activationBlockReasonOptions[0]
   const selectedTodoSteps = selectedTodo ? getResolvedTodoSteps(selectedTodo) : []
   const selectedTodoCurrentStepIndex = selectedTodo?.currentStepIndex ?? 0
+  const selectedTodoQuickStartStep = selectedTodo?.quickStartStep.trim() ?? ''
   const selectedTodoCurrentStep = selectedTodo
     ? getCurrentTodoStep(selectedTodo) || '还没有最简启动步骤'
     : '还没有最简启动步骤'
@@ -486,14 +565,6 @@ function App() {
     setFocusContinuationQuickStartDraft(focusContinuationSuggestion.quickStartStep)
     setFocusContinuationDraft(focusContinuationSuggestion.nextSteps)
   }, [focusContinuationSuggestion])
-
-  const closeLaunchMorePanel = () => {
-    setLaunchMoreOpen(false)
-    setLaunchManageOpen(false)
-    setActivationAssistOpen(false)
-    setFocusFeedbackOpen(false)
-    setFocusFeedbackCollapsed(false)
-  }
 
   const findLatestCompletedFocusSessionId = (todoId: string, projectId: string): string | null => {
     if (!snapshot) {
@@ -520,6 +591,7 @@ function App() {
         }
         startTransition(() => setSnapshot(next))
         setSettingsDraft(next.settings)
+        setSettingsApiKeyDraft('')
         setAiReviewHistory(sortAiReviews(reviews))
       })
       .catch((reason) => {
@@ -566,6 +638,10 @@ function App() {
     }
   }, [focusSuggestion.todoId, projectTodos, selectedProject, selectedTodoId])
 
+  useLayoutEffect(() => {
+    latestSelectedTodoIdRef.current = selectedTodo?.id ?? null
+  }, [selectedTodo?.id])
+
   useEffect(() => {
     setPlannedPomodoros(Math.max(1, selectedTodo?.estimatedPomodoros ?? 1))
   }, [selectedTodo?.estimatedPomodoros, selectedTodo?.id])
@@ -578,6 +654,7 @@ function App() {
     setLaunchManageOpen(false)
     setLaunchDetailsOpen(shouldAutoOpenLaunchDetails)
     setLaunchMoreOpen(false)
+    setLaunchMoreTab('steps')
   }, [selectedTodo?.id, shouldAutoOpenLaunchDetails])
 
   useEffect(() => {
@@ -671,6 +748,7 @@ function App() {
       const next = await operation
       startTransition(() => setSnapshot(next))
       setSettingsDraft(next.settings)
+      setSettingsApiKeyDraft('')
       if (options?.message) {
         setMessage(options.message)
       }
@@ -685,8 +763,22 @@ function App() {
     }
   }
 
-  const saveSettingsAndRefresh = async (next: AppSettings) => {
-    setSettingsDraft(next)
+  const saveSettingsAndRefresh = async (next: SaveAppSettingsInput) => {
+    setSettingsDraft({
+      focusMinutes: next.focusMinutes,
+      shortBreakMinutes: next.shortBreakMinutes,
+      longBreakMinutes: next.longBreakMinutes,
+      longBreakInterval: next.longBreakInterval,
+      autoStartBreaks: next.autoStartBreaks,
+      autoStartFocus: next.autoStartFocus,
+      notificationsEnabled: next.notificationsEnabled,
+      minimizeToTray: next.minimizeToTray,
+      launchOnStartup: next.launchOnStartup,
+      soundEnabled: next.soundEnabled,
+      aiBaseUrl: next.aiBaseUrl,
+      aiApiKeyConfigured: next.aiApiKey.trim() ? true : next.aiApiKeyConfigured,
+      aiModelId: next.aiModelId,
+    })
     await syncSnapshot(saveSettings(next), { message: '偏好设置已保存' })
   }
 
@@ -721,6 +813,7 @@ function App() {
     const target = Math.max(1, options?.targetPomodoros ?? plannedPomodoros)
     const durationSec = Math.max(60, options?.durationSec ?? snapshot.settings.focusMinutes * 60)
     const startedAt = new Date().toISOString()
+    const deadlineAt = new Date(Date.parse(startedAt) + durationSec * 1000).toISOString()
 
     setSelectedProjectId(nextProject.id)
     setSelectedTodoId(nextTodo.id)
@@ -734,6 +827,7 @@ function App() {
       todoId: nextTodo.id,
       projectId: nextProject.id,
       phaseStartedAt: startedAt,
+      deadlineAt,
     })
 
     if (nextTodo.status === 'todo' || nextTodo.estimatedPomodoros !== target) {
@@ -778,6 +872,9 @@ function App() {
     setTodoActivationRelief(null)
     void primePhaseAlertSound()
 
+    const startedAt = new Date().toISOString()
+    const deadlineAt = new Date(Date.parse(startedAt) + ACTIVATION_DURATION_SEC * 1000).toISOString()
+
     setSelectedProjectId(nextProject.id)
     setSelectedTodoId(nextTodo.id)
     setActivationSession({
@@ -785,7 +882,8 @@ function App() {
       remainingSec: ACTIVATION_DURATION_SEC,
       todoId: nextTodo.id,
       projectId: nextProject.id,
-      startedAt: new Date().toISOString(),
+      startedAt,
+      deadlineAt,
     })
 
     if (nextTodo.status === 'todo') {
@@ -872,6 +970,9 @@ function App() {
           plannedDurationSec: nextSeconds,
           completedPomodoros: nextCompleted,
           phaseStartedAt: now,
+          deadlineAt: snapshot.settings.autoStartBreaks
+            ? new Date(Date.parse(now) + nextSeconds * 1000).toISOString()
+            : null,
         })
         setPhaseAlertPrompt(
           buildFocusCompletionPrompt({
@@ -893,8 +994,6 @@ function App() {
 
       await syncSnapshot(
         recordFocusSession({
-          projectId: current.projectId,
-          todoId: current.todoId,
           type: current.phase,
           plannedDurationSec: plannedBreakSec,
           actualDurationSec: plannedBreakSec,
@@ -920,6 +1019,9 @@ function App() {
         remainingSec: snapshot.settings.focusMinutes * 60,
         plannedDurationSec: snapshot.settings.focusMinutes * 60,
         phaseStartedAt: now,
+        deadlineAt: snapshot.settings.autoStartFocus
+          ? new Date(Date.parse(now) + snapshot.settings.focusMinutes * 60 * 1000).toISOString()
+          : null,
       })
       setPhaseAlertPrompt(
         buildBreakCompletionPrompt({
@@ -1014,17 +1116,29 @@ function App() {
     const actualDurationSec = Math.max(0, plannedDurationSec - timer.remainingSec)
 
     await syncSnapshot(
-      recordFocusSession({
-        projectId: timer.projectId,
-        todoId: timer.todoId,
-        type: timer.phase,
-        plannedDurationSec,
-        actualDurationSec,
-        startedAt: timer.phaseStartedAt ?? now,
-        endedAt: now,
-        result: timer.phase === 'focus' ? 'interrupted' : 'skipped',
-        interruptReason: timer.phase === 'focus' ? '手动终止' : '主动跳过休息',
-      }),
+      recordFocusSession(
+        timer.phase === 'focus'
+          ? {
+              projectId: timer.projectId,
+              todoId: timer.todoId,
+              type: 'focus',
+              plannedDurationSec,
+              actualDurationSec,
+              startedAt: timer.phaseStartedAt ?? now,
+              endedAt: now,
+              result: 'interrupted',
+              interruptReason: '手动终止',
+            }
+          : {
+              type: timer.phase,
+              plannedDurationSec,
+              actualDurationSec,
+              startedAt: timer.phaseStartedAt ?? now,
+              endedAt: now,
+              result: 'skipped',
+              interruptReason: '主动跳过休息',
+            },
+      ),
       { silent: true },
     )
 
@@ -1046,8 +1160,6 @@ function App() {
 
     await syncSnapshot(
       recordFocusSession({
-        projectId: timer.projectId,
-        todoId: timer.todoId,
         type: timer.phase,
         plannedDurationSec: plannedBreakSec,
         actualDurationSec: Math.max(0, plannedBreakSec - timer.remainingSec),
@@ -1066,6 +1178,7 @@ function App() {
       remainingSec: snapshot.settings.focusMinutes * 60,
       plannedDurationSec: snapshot.settings.focusMinutes * 60,
       phaseStartedAt: now,
+      deadlineAt: new Date(Date.parse(now) + snapshot.settings.focusMinutes * 60 * 1000).toISOString(),
     })
     setMessage('已跳过休息，重新进入专注')
   }
@@ -1082,13 +1195,13 @@ function App() {
       }
       if (timer.phase === 'idle') {
         if (activationSession.todoId) {
-          setActivationSession((current) => ({ ...current, running: !current.running }))
+          setActivationSession((current) => setActivationSessionRunning(current, !current.running))
           return
         }
         void startActivationRun()
         return
       }
-      setTimer((current) => ({ ...current, running: !current.running }))
+      setTimer((current) => setTimerRunning(current, !current.running))
       return
     }
     if (action === 'skip-break' && timer.phase !== 'idle' && timer.phase !== 'focus') {
@@ -1131,13 +1244,15 @@ function App() {
     setConfirmState(null)
     setLaunchManageOpen(false)
     setFocusFeedbackOpen(false)
+    setLaunchMoreOpen(false)
+    setLaunchMoreTab('steps')
   }, [page])
 
   useEffect(() => {
-    setTodoAiPreviewOpen(false)
-    setTodoAiPreview([])
-    setSelectedAiTodoIds([])
-  }, [manageProject?.id])
+    if (!settingsOpen) {
+      setSettingsApiKeyDraft('')
+    }
+  }, [settingsOpen])
 
   useEffect(() => {
     setSelectedAiTodoIds((current) => pruneSelectedTodoIds(current, manageEnhanceableTodos))
@@ -1432,7 +1547,7 @@ function App() {
       return
     }
 
-    setActivationSession((current) => ({ ...current, running: !current.running }))
+    setActivationSession((current) => setActivationSessionRunning(current, !current.running))
   }
 
   const handleStopActivationRun = () => {
@@ -1471,6 +1586,10 @@ function App() {
       return
     }
 
+    const requestedTodo = selectedTodo
+    const requestId = activationReliefRequestIdRef.current + 1
+    activationReliefRequestIdRef.current = requestId
+
     setActivationAiGenerating(true)
     setError(null)
     setActivationReliefHelpful(false)
@@ -1481,12 +1600,29 @@ function App() {
         activationBlockReasonOptions.find((option) => option.id === blockReason)?.label ??
         selectedActivationBlockReason.label
       const relief = await generateTodoActivationRelief({
-        todoId: selectedTodo.id,
+        todoId: requestedTodo.id,
         blockReason,
         mode,
         previousRelief: mode === 'initial' ? null : todoActivationRelief,
       })
-      setTodoActivationRelief(relief)
+
+      if (
+        !shouldApplyActivationReliefResult({
+          requestedTodoId: requestedTodo.id,
+          currentSelectedTodoId: latestSelectedTodoIdRef.current,
+          reliefTodoId: relief.todoId,
+          requestId,
+          latestRequestId: activationReliefRequestIdRef.current,
+        })
+      ) {
+        return
+      }
+
+      setTodoActivationRelief({
+        ...relief,
+        originalQuickStartStep: requestedTodo.quickStartStep,
+        originalDescription: requestedTodo.description,
+      })
       setMessage(
         mode === 'initial'
           ? `AI 已按“${blockReasonLabel}”生成一版新的开工建议`
@@ -1497,7 +1633,9 @@ function App() {
     } catch (reason) {
       setError(extractError(reason))
     } finally {
-      setActivationAiGenerating(false)
+      if (requestId === activationReliefRequestIdRef.current) {
+        setActivationAiGenerating(false)
+      }
     }
   }
 
@@ -1523,13 +1661,17 @@ function App() {
       return
     }
 
-    const draft = buildTodoActivationReliefDraft(selectedTodo, todoActivationRelief)
-    const next = await syncSnapshot(saveTodo(draft), {
-      message: '已更新这条代办的最简启动步骤',
-    })
+    try {
+      const draft = buildTodoActivationReliefDraft(selectedTodo, todoActivationRelief)
+      const next = await syncSnapshot(saveTodo(draft), {
+        message: '已更新这条代办的最简启动步骤',
+      })
 
-    if (next) {
-      setTodoActivationRelief(null)
+      if (next) {
+        setTodoActivationRelief(null)
+      }
+    } catch (reason) {
+      setError(extractError(reason))
     }
   }
 
@@ -1635,6 +1777,7 @@ function App() {
     setFocusContinuationSuggestion(null)
     setFocusFeedbackOpen(true)
     setFocusFeedbackCollapsed(false)
+    openLaunchMorePanel('review')
     setPhaseAlertPrompt(null)
 
     window.setTimeout(() => {
@@ -1712,6 +1855,20 @@ function App() {
     if (next) {
       setFocusContinuationSuggestion(null)
     }
+  }
+
+  const openLaunchMorePanel = (tab: LaunchMoreTab = 'steps') => {
+    setLaunchMoreTab(tab)
+    setLaunchMoreOpen(true)
+  }
+
+  const handleCloseLaunchMorePanel = () => {
+    setLaunchMoreOpen(false)
+    setLaunchMoreTab('steps')
+    setLaunchManageOpen(false)
+    setActivationAssistOpen(false)
+    setFocusFeedbackOpen(false)
+    setFocusFeedbackCollapsed(false)
   }
 
   const renderLaunchContextBody = () => {
@@ -1856,6 +2013,12 @@ function App() {
                         </div>
 
                         <article className="focus-kickoff__card focus-kickoff__card--primary">
+                          <div className="focus-kickoff__quick-start">
+                            <span>最简启动步骤</span>
+                            <strong className="focus-kickoff__quick-start-text">
+                              {selectedTodoQuickStartStep || '还没有最简启动步骤'}
+                            </strong>
+                          </div>
                           <div className="focus-kickoff__card-topline">
                             <span>下一步</span>
                             {selectedTodoSteps.length ? (
@@ -1941,7 +2104,7 @@ function App() {
                           <button
                             type="button"
                             className="action-button action-button--compact action-button--ghost"
-                            onClick={() => setLaunchMoreOpen(true)}
+                            onClick={() => openLaunchMorePanel('steps')}
                             aria-expanded={launchMoreOpen}
                           >
                             更多选项
@@ -1952,405 +2115,385 @@ function App() {
                     </div>
 
                     {launchMoreOpen ? (
-                        <ModalShell
-                          title="更多选项"
-                          className="modal-card--launch-drawer"
-                          onClose={closeLaunchMorePanel}
-                        >
-                          <div className="launch-more-panel">
-                            <section className="focus-kickoff__section focus-kickoff__section--drawer-group">
+                      <ModalShell
+                        title="更多选项"
+                        className="modal-card--launch-drawer"
+                        onClose={handleCloseLaunchMorePanel}
+                      >
+                        <div className="launch-more-panel">
+                          <div
+                            className="launch-more-tabs"
+                            role="tablist"
+                            aria-label="更多选项切换"
+                            onKeyDown={(event) =>
+                              handleTabListKeyDown(
+                                event,
+                                launchMoreTabIds,
+                                launchMoreTab,
+                                setLaunchMoreTab,
+                                LAUNCH_MORE_TAB_GROUP_ID,
+                              )
+                            }
+                          >
+                            {launchMoreTabOptions.map((tab) => {
+                              const isSelected = launchMoreTab === tab.id
+
+                              return (
+                                <button
+                                  key={tab.id}
+                                  id={buildTabId(LAUNCH_MORE_TAB_GROUP_ID, tab.id)}
+                                  type="button"
+                                  role="tab"
+                                  aria-selected={isSelected}
+                                  aria-controls={buildTabPanelId(LAUNCH_MORE_TAB_GROUP_ID, tab.id)}
+                                  tabIndex={isSelected ? 0 : -1}
+                                  className={isSelected ? 'launch-more-tab is-active' : 'launch-more-tab'}
+                                  onClick={() => setLaunchMoreTab(tab.id)}
+                                >
+                                  {tab.label}
+                                </button>
+                              )
+                            })}
+                          </div>
+
+                          <div className="launch-more-panel__body">
+                            <section
+                              id={buildTabPanelId(LAUNCH_MORE_TAB_GROUP_ID, 'steps')}
+                              role="tabpanel"
+                              aria-labelledby={buildTabId(LAUNCH_MORE_TAB_GROUP_ID, 'steps')}
+                              hidden={launchMoreTab !== 'steps'}
+                              className="focus-kickoff__section focus-kickoff__section--drawer-group"
+                            >
                               <div className="focus-kickoff__section-head">
                                 <div className="focus-kickoff__section-copy">
-                                  <span className="eyebrow">步骤</span>
                                   <h4>步骤</h4>
                                 </div>
-                                <div className="focus-kickoff__utility-actions focus-kickoff__utility-actions--step-management">
-                                  <button
-                                    type="button"
-                                    className={
-                                      launchManageOpen
-                                        ? 'action-button action-button--compact'
-                                        : 'action-button action-button--compact action-button--primary'
-                                    }
-                                    onClick={() => setLaunchManageOpen((current) => !current)}
-                                    aria-expanded={launchManageOpen}
-                                  >
-                                    {launchManageOpen ? '收起' : '展开'}
-                                  </button>
-                                </div>
                               </div>
 
-                              {launchManageOpen ? (
-                                <div className="focus-kickoff__section-body focus-kickoff__section-body--stacked">
-                                  <article className="focus-kickoff__utility-row focus-kickoff__utility-row--nested">
-                                    <div className="focus-kickoff__utility-copy">
-                                      <h4>编辑</h4>
-                                    </div>
-                                    <div className="focus-kickoff__utility-actions focus-kickoff__utility-actions--step-management">
-                                      <button
-                                        type="button"
-                                        className="action-button action-button--compact action-button--ghost"
-                                        onClick={() => void handleRewindTodoStep()}
-                                        disabled={!selectedTodoSteps.length || selectedTodoCurrentStepIndex === 0}
-                                      >
-                                        回退一步
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="action-button action-button--compact"
-                                        onClick={() => {
-                                          closeLaunchMorePanel()
-                                          openTodoEditor(selectedTodo)
-                                        }}
-                                        disabled={!selectedTodo}
-                                      >
-                                        编辑步骤
-                                      </button>
-                                    </div>
-                                  </article>
+                              <div className="focus-kickoff__section-body focus-kickoff__section-body--stacked">
+                                <article className="focus-kickoff__utility-row focus-kickoff__utility-row--nested">
+                                  <div className="focus-kickoff__utility-copy">
+                                    <h4>编辑</h4>
+                                  </div>
+                                  <div className="focus-kickoff__utility-actions focus-kickoff__utility-actions--step-management">
+                                    <button
+                                      type="button"
+                                      className="action-button action-button--compact action-button--ghost"
+                                      onClick={() => void handleRewindTodoStep()}
+                                      disabled={!selectedTodoSteps.length || selectedTodoCurrentStepIndex === 0}
+                                    >
+                                      回退一步
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="action-button action-button--compact"
+                                      onClick={() => {
+                                        handleCloseLaunchMorePanel()
+                                        openTodoEditor(selectedTodo)
+                                      }}
+                                      disabled={!selectedTodo}
+                                    >
+                                      编辑步骤
+                                    </button>
+                                  </div>
+                                </article>
 
-                                  <article className="focus-kickoff__utility-row focus-kickoff__utility-row--nested">
-                                    <div className="focus-kickoff__utility-copy">
-                                      <h4>番茄数</h4>
-                                    </div>
-                                    <label className="focus-kickoff__plan-field">
-                                      <input
-                                        type="number"
-                                        min={1}
-                                        max={20}
-                                        value={plannedPomodoros}
-                                        disabled={focusInteractionLocked}
-                                        onChange={(event) =>
-                                          setPlannedPomodoros(Math.max(1, Math.min(20, Number(event.target.value) || 1)))
-                                        }
-                                        onBlur={() => void handlePlannedPomodorosSave()}
-                                      />
-                                      <small>个番茄</small>
-                                    </label>
-                                  </article>
-                                </div>
-                              ) : null}
+                                <article className="focus-kickoff__utility-row focus-kickoff__utility-row--nested">
+                                  <div className="focus-kickoff__utility-copy">
+                                    <h4>番茄数</h4>
+                                  </div>
+                                  <label className="focus-kickoff__plan-field">
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      max={20}
+                                      value={plannedPomodoros}
+                                      disabled={focusInteractionLocked}
+                                      onChange={(event) =>
+                                        setPlannedPomodoros(Math.max(1, Math.min(20, Number(event.target.value) || 1)))
+                                      }
+                                      onBlur={() => void handlePlannedPomodorosSave()}
+                                    />
+                                    <small>个番茄</small>
+                                  </label>
+                                </article>
+                              </div>
                             </section>
 
-                            <section className="focus-kickoff__section focus-kickoff__section--drawer-group">
+                            <section
+                              id={buildTabPanelId(LAUNCH_MORE_TAB_GROUP_ID, 'assist')}
+                              role="tabpanel"
+                              aria-labelledby={buildTabId(LAUNCH_MORE_TAB_GROUP_ID, 'assist')}
+                              hidden={launchMoreTab !== 'assist'}
+                              className="focus-kickoff__section focus-kickoff__section--drawer-group"
+                            >
                               <div className="focus-kickoff__section-head">
                                 <div className="focus-kickoff__section-copy">
-                                  <span className="eyebrow">卡住</span>
                                   <h4>AI 求助</h4>
                                 </div>
-                                <div className="focus-kickoff__utility-actions">
-                                  <button
-                                    type="button"
-                                    className={
-                                      activationAssistOpen || todoActivationRelief
-                                        ? 'action-button action-button--compact'
-                                        : 'action-button action-button--compact action-button--primary'
-                                    }
-                                    onClick={() => {
-                                      if (activationAssistOpen || todoActivationRelief) {
-                                        setActivationAssistOpen(false)
-                                        setTodoActivationRelief(null)
-                                        setActivationReliefHelpful(false)
-                                        return
-                                      }
-                                      setActivationAssistOpen(true)
-                                    }}
-                                    disabled={!selectedTodo || focusInteractionLocked || activationAiGenerating}
-                                    aria-expanded={activationAssistOpen || Boolean(todoActivationRelief)}
-                                  >
-                                    {activationAiGenerating
-                                      ? 'AI 生成中...'
-                                      : activationAssistOpen || todoActivationRelief
-                                        ? '收起'
-                                        : '展开'}
-                                  </button>
-                                </div>
                               </div>
 
-                              {activationAssistOpen || todoActivationRelief ? (
-                                <div className="focus-kickoff__section-body">
-                                  {activationAssistOpen ? (
-                                    <div className="focus-kickoff__utility-detail">
-                                      <div className="focus-kickoff__assist-reasons" role="list" aria-label="卡住原因">
-                                        {activationBlockReasonOptions.map((option) => (
-                                          <button
-                                            key={option.id}
-                                            type="button"
-                                            className={
-                                              option.id === activationBlockReason
-                                                ? 'focus-kickoff__assist-reason is-selected'
-                                                : 'focus-kickoff__assist-reason'
-                                            }
-                                            onClick={() => void handleSelectActivationReason(option.id)}
-                                            disabled={focusInteractionLocked || activationAiGenerating}
-                                          >
-                                            <strong>{option.label}</strong>
-                                            <span>{option.hint}</span>
-                                          </button>
-                                        ))}
+                              <div className="focus-kickoff__section-body">
+                                <div className="focus-kickoff__utility-detail">
+                                  <div className="focus-kickoff__assist-reasons" role="list" aria-label="卡住原因">
+                                    {activationBlockReasonOptions.map((option) => (
+                                      <button
+                                        key={option.id}
+                                        type="button"
+                                        className={
+                                          option.id === activationBlockReason
+                                            ? 'focus-kickoff__assist-reason is-selected'
+                                            : 'focus-kickoff__assist-reason'
+                                        }
+                                        onClick={() => void handleSelectActivationReason(option.id)}
+                                        disabled={!selectedTodo || focusInteractionLocked || activationAiGenerating}
+                                      >
+                                        <strong>{option.label}</strong>
+                                        <span>{option.hint}</span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                {todoActivationRelief ? (
+                                  <article className="focus-relief-card focus-kickoff__section focus-kickoff__section--assist-result">
+                                    <div className="focus-relief-card__head">
+                                      <div>
+                                        <span>AI 解阻建议</span>
+                                        <h4>{todoActivationRelief.title}</h4>
+                                      </div>
+                                      <div className="focus-relief-card__head-meta">
+                                        <span className="info-pill">原因：{selectedActivationBlockReason.label}</span>
+                                        <span className="info-pill">先预览，再决定是否应用</span>
                                       </div>
                                     </div>
-                                  ) : null}
-
-                                  {todoActivationRelief ? (
-                                    <article className="focus-relief-card focus-kickoff__section focus-kickoff__section--assist-result">
-                                      <div className="focus-relief-card__head">
-                                        <div>
-                                          <span>AI 解阻建议</span>
-                                          <h4>{todoActivationRelief.title}</h4>
-                                        </div>
-                                        <div className="focus-relief-card__head-meta">
-                                          <span className="info-pill">原因：{selectedActivationBlockReason.label}</span>
-                                          <span className="info-pill">先预览，再决定是否应用</span>
-                                        </div>
+                                    <div className="focus-relief-card__grid">
+                                      <section className="focus-relief-card__section">
+                                        <span>当前最简启动步骤</span>
+                                        <p className="focus-relief-card__body">
+                                          {selectedTodo?.quickStartStep || '当前还没有最简启动步骤'}
+                                        </p>
+                                      </section>
+                                      <section className="focus-relief-card__section">
+                                        <span>AI 建议的新起点</span>
+                                        <p className="focus-relief-card__body">{todoActivationRelief.quickStartStep}</p>
+                                      </section>
+                                      <section className="focus-relief-card__section">
+                                        <span>AI 建议的后续推进</span>
+                                        <p className="focus-relief-card__body focus-relief-card__body--steps">
+                                          {todoActivationRelief.updatedDescription}
+                                        </p>
+                                      </section>
+                                      <section className="focus-relief-card__section">
+                                        <span>如果还是卡住</span>
+                                        <p className="focus-relief-card__body">{todoActivationRelief.fallbackStep}</p>
+                                      </section>
+                                    </div>
+                                    <div className="focus-relief-card__feedback">
+                                      <div className="focus-relief-card__feedback-copy">
+                                        <span>这版建议有帮助吗</span>
+                                        <p>
+                                          {activationReliefHelpful
+                                            ? '已标记这版有帮助，适合直接应用到当前任务。'
+                                            : '如果还不够好，可以继续让 AI 把第一步压得更小，或者换一个切入角度。'}
+                                        </p>
                                       </div>
-                                      <div className="focus-relief-card__grid">
-                                        <section className="focus-relief-card__section">
-                                          <span>当前最简启动步骤</span>
-                                          <p className="focus-relief-card__body">
-                                            {selectedTodo?.quickStartStep || '当前还没有最简启动步骤'}
-                                          </p>
-                                        </section>
-                                        <section className="focus-relief-card__section">
-                                          <span>AI 建议的新起点</span>
-                                          <p className="focus-relief-card__body">{todoActivationRelief.quickStartStep}</p>
-                                        </section>
-                                        <section className="focus-relief-card__section">
-                                          <span>AI 建议的后续推进</span>
-                                          <p className="focus-relief-card__body focus-relief-card__body--steps">
-                                            {todoActivationRelief.updatedDescription}
-                                          </p>
-                                        </section>
-                                        <section className="focus-relief-card__section">
-                                          <span>如果还是卡住</span>
-                                          <p className="focus-relief-card__body">{todoActivationRelief.fallbackStep}</p>
-                                        </section>
-                                      </div>
-                                      <div className="focus-relief-card__feedback">
-                                        <div className="focus-relief-card__feedback-copy">
-                                          <span>这版建议有帮助吗</span>
-                                          <p>
-                                            {activationReliefHelpful
-                                              ? '已标记这版有帮助，适合直接应用到当前任务。'
-                                              : '如果还不够好，可以继续让 AI 把第一步压得更小，或者换一个切入角度。'}
-                                          </p>
-                                        </div>
-                                        <div className="focus-relief-card__feedback-actions">
-                                          <button
-                                            type="button"
-                                            className={
-                                              activationReliefHelpful
-                                                ? 'action-button action-button--compact action-button--primary'
-                                                : 'action-button action-button--compact'
-                                            }
-                                            onClick={handleMarkActivationReliefHelpful}
-                                          >
-                                            这版有用
-                                          </button>
-                                          <button
-                                            type="button"
-                                            className="action-button action-button--compact action-button--ghost"
-                                            onClick={() => void handleGenerateActivationRelief('need_smaller')}
-                                            disabled={activationAiGenerating}
-                                          >
-                                            再细一点
-                                          </button>
-                                          <button
-                                            type="button"
-                                            className="action-button action-button--compact action-button--ghost"
-                                            onClick={() => void handleGenerateActivationRelief('need_alternative')}
-                                            disabled={activationAiGenerating}
-                                          >
-                                            换个思路
-                                          </button>
-                                        </div>
-                                      </div>
-                                      <div className="modal-form__actions">
+                                      <div className="focus-relief-card__feedback-actions">
                                         <button
                                           type="button"
-                                          className="action-button action-button--ghost"
-                                          onClick={() => {
-                                            setTodoActivationRelief(null)
-                                            setActivationReliefHelpful(false)
-                                          }}
+                                          className={
+                                            activationReliefHelpful
+                                              ? 'action-button action-button--compact action-button--primary'
+                                              : 'action-button action-button--compact'
+                                          }
+                                          onClick={handleMarkActivationReliefHelpful}
                                         >
-                                          取消
-                                        </button>
-                                        <button
-                                          type="button"
-                                          className="action-button action-button--primary"
-                                          onClick={() => void handleApplyActivationRelief()}
-                                        >
-                                          {activationReliefHelpful ? '应用这版建议' : '应用到当前任务'}
-                                        </button>
-                                      </div>
-                                    </article>
-                                  ) : null}
-                                </div>
-                              ) : null}
-                            </section>
-
-                            <section className="focus-kickoff__section focus-kickoff__section--drawer-group">
-                              <div className="focus-kickoff__section-head">
-                                <div className="focus-kickoff__section-copy">
-                                  <span className="eyebrow">复盘</span>
-                                  <h4>复盘</h4>
-                                </div>
-                                <div className="focus-kickoff__utility-actions">
-                                  <button
-                                    type="button"
-                                    className={
-                                      focusFeedbackOpen
-                                        ? 'action-button action-button--compact'
-                                        : 'action-button action-button--compact action-button--primary'
-                                    }
-                                    onClick={() => {
-                                      setFocusFeedbackOpen((current) => !current)
-                                      setFocusFeedbackCollapsed(false)
-                                    }}
-                                  >
-                                    {focusFeedbackOpen ? '收起' : '展开'}
-                                  </button>
-                                </div>
-                              </div>
-
-                              {focusFeedbackOpen ? (
-                                <div className="focus-kickoff__section-body">
-                                  <article className="focus-feedback-card focus-feedback-card--drawer" ref={focusFeedbackCardRef}>
-                                    <div className="focus-feedback-card__head">
-                                      <div className="focus-feedback-card__intro">
-                                        <span>复盘</span>
-                                        <h4>AI 续写</h4>
-                                      </div>
-                                      <div className="focus-feedback-card__meta">
-                                        <button
-                                          type="button"
-                                          className="focus-feedback-card__toggle"
-                                          onClick={() => setFocusFeedbackCollapsed((current) => !current)}
-                                          aria-expanded={!focusFeedbackCollapsed}
-                                        >
-                                          {focusFeedbackCollapsed
-                                            ? `展开输入（${focusFeedbackFilledCount}/3）`
-                                            : '收起输入'}
+                                          这版有用
                                         </button>
                                         <button
                                           type="button"
                                           className="action-button action-button--compact action-button--ghost"
-                                          onClick={() => setFocusFeedbackOpen(false)}
+                                          onClick={() => void handleGenerateActivationRelief('need_smaller')}
+                                          disabled={activationAiGenerating}
                                         >
-                                          关闭复盘
+                                          再细一点
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="action-button action-button--compact action-button--ghost"
+                                          onClick={() => void handleGenerateActivationRelief('need_alternative')}
+                                          disabled={activationAiGenerating}
+                                        >
+                                          换个思路
                                         </button>
                                       </div>
                                     </div>
+                                    <div className="modal-form__actions">
+                                      <button
+                                        type="button"
+                                        className="action-button action-button--ghost"
+                                        onClick={() => {
+                                          setTodoActivationRelief(null)
+                                          setActivationReliefHelpful(false)
+                                        }}
+                                      >
+                                        取消
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="action-button action-button--primary"
+                                        onClick={() => void handleApplyActivationRelief()}
+                                      >
+                                        {activationReliefHelpful ? '应用这版建议' : '应用到当前任务'}
+                                      </button>
+                                    </div>
+                                  </article>
+                                ) : null}
+                              </div>
+                            </section>
 
-                                    {!focusFeedbackCollapsed ? (
-                                      <>
-                                        <div className="focus-feedback-grid">
-                                          <label className="field">
-                                            <span>已完成</span>
-                                            <textarea
-                                              rows={2}
-                                              value={focusFeedbackDraft?.completedText ?? ''}
-                                              placeholder="已完成"
-                                              onChange={(event) =>
-                                                handleFocusFeedbackFieldChange('completedText', event.target.value)
-                                              }
-                                            ></textarea>
-                                          </label>
-                                          <label className="field">
-                                            <span>问题</span>
-                                            <textarea
-                                              rows={2}
-                                              value={focusFeedbackDraft?.issueText ?? ''}
-                                              placeholder="问题"
-                                              onChange={(event) =>
-                                                handleFocusFeedbackFieldChange('issueText', event.target.value)
-                                              }
-                                            ></textarea>
-                                          </label>
-                                          <label className="field">
-                                            <span>风险</span>
-                                            <textarea
-                                              rows={2}
-                                              value={focusFeedbackDraft?.riskText ?? ''}
-                                              placeholder="风险"
-                                              onChange={(event) =>
-                                                handleFocusFeedbackFieldChange('riskText', event.target.value)
-                                              }
-                                            ></textarea>
-                                          </label>
-                                        </div>
+                            <section
+                              id={buildTabPanelId(LAUNCH_MORE_TAB_GROUP_ID, 'review')}
+                              role="tabpanel"
+                              aria-labelledby={buildTabId(LAUNCH_MORE_TAB_GROUP_ID, 'review')}
+                              hidden={launchMoreTab !== 'review'}
+                              className="focus-kickoff__section focus-kickoff__section--drawer-group"
+                            >
+                              <div className="focus-kickoff__section-head">
+                                <div className="focus-kickoff__section-copy">
+                                  <h4>复盘</h4>
+                                </div>
+                              </div>
 
-                                        <div className="focus-feedback-card__actions">
-                                          <p className="focus-feedback-card__hint">{focusContinuationDisabledReason ?? '生成下一步'}</p>
-                                          <div className="modal-form__actions">
-                                            <button
-                                              type="button"
-                                              className="action-button action-button--ghost"
-                                              onClick={handleResetFocusFeedback}
-                                              disabled={focusContinuationGenerating}
-                                            >
-                                              清空
-                                            </button>
-                                            <button
-                                              type="button"
-                                              className="action-button action-button--primary"
-                                              onClick={() => void handleGenerateFocusContinuation()}
-                                              disabled={Boolean(focusContinuationDisabledReason)}
-                                            >
-                                              {focusContinuationGenerating ? 'AI 生成中...' : '生成下一步'}
-                                            </button>
-                                          </div>
-                                        </div>
-                                      </>
-                                    ) : (
-                                      <div className="focus-feedback-card__collapsed">
-                                        <span className="info-pill">已填写 {focusFeedbackFilledCount}/3</span>
-                                      </div>
-                                    )}
+                              <div className="focus-kickoff__section-body">
+                                <article className="focus-feedback-card focus-feedback-card--drawer" ref={focusFeedbackCardRef}>
+                                  <div className="focus-feedback-card__head">
+                                    <div className="focus-feedback-card__intro">
+                                      <span>复盘</span>
+                                      <h4>AI 续写</h4>
+                                    </div>
+                                    <div className="focus-feedback-card__meta">
+                                      <button
+                                        type="button"
+                                        className="focus-feedback-card__toggle"
+                                        onClick={() => setFocusFeedbackCollapsed((current) => !current)}
+                                        aria-expanded={!focusFeedbackCollapsed}
+                                      >
+                                        {focusFeedbackCollapsed
+                                          ? `展开输入（${focusFeedbackFilledCount}/3）`
+                                          : '收起输入'}
+                                      </button>
+                                    </div>
+                                  </div>
 
-                                    {focusContinuationSuggestion ? (
-                                      <div className="focus-continuation-card">
-                                        <section className="focus-continuation-card__section">
-                                          <span>最简启动</span>
+                                  {!focusFeedbackCollapsed ? (
+                                    <>
+                                      <div className="focus-feedback-grid">
+                                        <label className="field">
+                                          <span>已完成</span>
                                           <textarea
                                             rows={2}
-                                            value={focusContinuationQuickStartDraft}
-                                            onChange={(event) => setFocusContinuationQuickStartDraft(event.target.value)}
-                                            placeholder="最简启动"
+                                            value={focusFeedbackDraft?.completedText ?? ''}
+                                            placeholder="已完成"
+                                            onChange={(event) =>
+                                              handleFocusFeedbackFieldChange('completedText', event.target.value)
+                                            }
                                           ></textarea>
-                                        </section>
-                                        <section className="focus-continuation-card__section">
-                                          <span>步骤</span>
+                                        </label>
+                                        <label className="field">
+                                          <span>问题</span>
                                           <textarea
-                                            rows={Math.max(3, focusContinuationDraft.length || 3)}
-                                            value={focusContinuationDraft.join('\n')}
-                                            onChange={(event) => setFocusContinuationDraft(parseTodoSteps(event.target.value))}
-                                            placeholder="每行一步"
+                                            rows={2}
+                                            value={focusFeedbackDraft?.issueText ?? ''}
+                                            placeholder="问题"
+                                            onChange={(event) =>
+                                              handleFocusFeedbackFieldChange('issueText', event.target.value)
+                                            }
                                           ></textarea>
-                                        </section>
-                                        <section className="focus-continuation-card__section">
-                                          <span>再次卡住时</span>
-                                          <p>{focusContinuationSuggestion.fallbackStep}</p>
-                                        </section>
-                                        <div className="focus-kickoff__step-actions focus-kickoff__step-actions--continuation">
+                                        </label>
+                                        <label className="field">
+                                          <span>风险</span>
+                                          <textarea
+                                            rows={2}
+                                            value={focusFeedbackDraft?.riskText ?? ''}
+                                            placeholder="风险"
+                                            onChange={(event) =>
+                                              handleFocusFeedbackFieldChange('riskText', event.target.value)
+                                            }
+                                          ></textarea>
+                                        </label>
+                                      </div>
+
+                                      <div className="focus-feedback-card__actions">
+                                        <p className="focus-feedback-card__hint">{focusContinuationDisabledReason ?? '生成下一步'}</p>
+                                        <div className="modal-form__actions">
                                           <button
                                             type="button"
-                                            className="action-button action-button--compact"
-                                            onClick={() => void handleUseContinuationAsSteps()}
+                                            className="action-button action-button--ghost"
+                                            onClick={handleResetFocusFeedback}
+                                            disabled={focusContinuationGenerating}
                                           >
-                                            写回任务
+                                            清空
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="action-button action-button--primary"
+                                            onClick={() => void handleGenerateFocusContinuation()}
+                                            disabled={Boolean(focusContinuationDisabledReason)}
+                                          >
+                                            {focusContinuationGenerating ? 'AI 生成中...' : '生成下一步'}
                                           </button>
                                         </div>
                                       </div>
-                                    ) : null}
-                                  </article>
-                                </div>
-                              ) : null}
+                                    </>
+                                  ) : (
+                                    <div className="focus-feedback-card__collapsed">
+                                      <span className="info-pill">已填写 {focusFeedbackFilledCount}/3</span>
+                                    </div>
+                                  )}
+
+                                  {focusContinuationSuggestion ? (
+                                    <div className="focus-continuation-card">
+                                      <section className="focus-continuation-card__section">
+                                        <span>最简启动</span>
+                                        <textarea
+                                          rows={2}
+                                          value={focusContinuationQuickStartDraft}
+                                          onChange={(event) => setFocusContinuationQuickStartDraft(event.target.value)}
+                                          placeholder="最简启动"
+                                        ></textarea>
+                                      </section>
+                                      <section className="focus-continuation-card__section">
+                                        <span>步骤</span>
+                                        <textarea
+                                          rows={Math.max(3, focusContinuationDraft.length || 3)}
+                                          value={focusContinuationDraft.join('\n')}
+                                          onChange={(event) => setFocusContinuationDraft(parseTodoSteps(event.target.value))}
+                                          placeholder="每行一步"
+                                        ></textarea>
+                                      </section>
+                                      <section className="focus-continuation-card__section">
+                                        <span>再次卡住时</span>
+                                        <p>{focusContinuationSuggestion.fallbackStep}</p>
+                                      </section>
+                                      <div className="focus-kickoff__step-actions focus-kickoff__step-actions--continuation">
+                                        <button
+                                          type="button"
+                                          className="action-button action-button--compact"
+                                          onClick={() => void handleUseContinuationAsSteps()}
+                                        >
+                                          写回任务
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                </article>
+                              </div>
                             </section>
                           </div>
-                        </ModalShell>
-                      ) : null}
+                        </div>
+                      </ModalShell>
+                    ) : null}
                   </div>
                 ) : (
                   <EmptyState title="没有可开工任务" body="先去项目库创建待办，或切换到另一个项目。" />
@@ -2410,7 +2553,7 @@ function App() {
                         <button
                           type="button"
                           className="action-button action-button--primary"
-                          onClick={() => setTimer((current) => ({ ...current, running: !current.running }))}
+                          onClick={() => setTimer((current) => setTimerRunning(current, !current.running))}
                         >
                           {timer.running ? '暂停' : '继续'}
                         </button>
@@ -2740,11 +2883,27 @@ function App() {
                     bodyClassName="stats-panel-body"
                   >
                     <div className="stats-analysis__toolbar">
-                      <div className="stats-analysis-tabs" role="tablist" aria-label="项目分析视图">
+                      <div
+                        className="stats-analysis-tabs"
+                        role="tablist"
+                        aria-label="项目分析视图"
+                        onKeyDown={(event) =>
+                          handleTabListKeyDown(
+                            event,
+                            statsPrimaryViewIds,
+                            statsPrimaryView,
+                            setStatsPrimaryView,
+                            STATS_ANALYSIS_TAB_GROUP_ID,
+                          )
+                        }
+                      >
                         <button
+                          id={buildTabId(STATS_ANALYSIS_TAB_GROUP_ID, 'share')}
                           type="button"
                           role="tab"
                           aria-selected={statsPrimaryView === 'share'}
+                          aria-controls={buildTabPanelId(STATS_ANALYSIS_TAB_GROUP_ID, 'share')}
+                          tabIndex={statsPrimaryView === 'share' ? 0 : -1}
                           className={
                             statsPrimaryView === 'share'
                               ? 'stats-analysis-tab is-active'
@@ -2755,9 +2914,12 @@ function App() {
                           项目占比
                         </button>
                         <button
+                          id={buildTabId(STATS_ANALYSIS_TAB_GROUP_ID, 'review')}
                           type="button"
                           role="tab"
                           aria-selected={statsPrimaryView === 'review'}
+                          aria-controls={buildTabPanelId(STATS_ANALYSIS_TAB_GROUP_ID, 'review')}
+                          tabIndex={statsPrimaryView === 'review' ? 0 : -1}
                           className={
                             statsPrimaryView === 'review'
                               ? 'stats-analysis-tab is-active'
@@ -2770,111 +2932,115 @@ function App() {
                       </div>
                     </div>
 
-                    <div className="stats-analysis__intro">
-                      <p>
-                        {statsPrimaryView === 'share'
-                          ? '按专注投入查看当前统计范围内的项目占比。'
-                          : statsProject
-                            ? `当前范围已经切到「${statsProject.name}」，这里展示它的复盘摘要。`
-                            : '从列表进入某个项目，快速查看完成度、番茄投入和中断情况。'}
-                      </p>
+
+                    <div
+                      id={buildTabPanelId(STATS_ANALYSIS_TAB_GROUP_ID, 'share')}
+                      role="tabpanel"
+                      aria-labelledby={buildTabId(STATS_ANALYSIS_TAB_GROUP_ID, 'share')}
+                      hidden={statsPrimaryView !== 'share'}
+                      className="share-list"
+                    >
+                      {statsAnalytics.projectMetrics.length ? (
+                        statsAnalytics.projectMetrics.map((metric) => (
+                          <div key={metric.project.id} className="share-row">
+                            <div className="share-row__title">
+                              <span className="project-dot" style={{ backgroundColor: metric.project.color }}></span>
+                              <span>{metric.project.name}</span>
+                            </div>
+                            <div className="share-row__bar">
+                              <div
+                                style={{
+                                  width: `${Math.max(6, projectSharePercent(metric, statsAnalytics.projectMetrics))}%`,
+                                  backgroundColor: metric.project.color,
+                                }}
+                              ></div>
+                            </div>
+                            <strong>{projectSharePercent(metric, statsAnalytics.projectMetrics)}%</strong>
+                          </div>
+                        ))
+                      ) : (
+                        <EmptyState title="还没有统计数据" body="先去执行台完成几轮专注。" />
+                      )}
                     </div>
 
-                    {statsPrimaryView === 'share' ? (
-                      <div className="share-list">
-                        {statsAnalytics.projectMetrics.length ? (
-                          statsAnalytics.projectMetrics.map((metric) => (
-                            <div key={metric.project.id} className="share-row">
-                              <div className="share-row__title">
-                                <span className="project-dot" style={{ backgroundColor: metric.project.color }}></span>
-                                <span>{metric.project.name}</span>
-                              </div>
-                              <div className="share-row__bar">
-                                <div
-                                  style={{
-                                    width: `${Math.max(6, projectSharePercent(metric, statsAnalytics.projectMetrics))}%`,
-                                    backgroundColor: metric.project.color,
-                                  }}
-                                ></div>
-                              </div>
-                              <strong>{projectSharePercent(metric, statsAnalytics.projectMetrics)}%</strong>
-                            </div>
-                          ))
-                        ) : (
-                          <EmptyState title="还没有统计数据" body="先去执行台完成几轮专注。" />
-                        )}
-                      </div>
-                    ) : !statsProject ? (
-                      <div className="project-review-list">
-                        {statsAnalytics.projectMetrics.length ? (
-                          statsAnalytics.projectMetrics.map((metric) => {
-                            const totalTodos = metric.doneTodos + metric.openTodos
-                            const completion = totalTodos > 0 ? Math.round((metric.doneTodos / totalTodos) * 100) : 0
+                    <div
+                      id={buildTabPanelId(STATS_ANALYSIS_TAB_GROUP_ID, 'review')}
+                      role="tabpanel"
+                      aria-labelledby={buildTabId(STATS_ANALYSIS_TAB_GROUP_ID, 'review')}
+                      hidden={statsPrimaryView !== 'review'}
+                    >
+                      {!statsProject ? (
+                        <div className="project-review-list">
+                          {statsAnalytics.projectMetrics.length ? (
+                            statsAnalytics.projectMetrics.map((metric) => {
+                              const totalTodos = metric.doneTodos + metric.openTodos
+                              const completion = totalTodos > 0 ? Math.round((metric.doneTodos / totalTodos) * 100) : 0
 
-                            return (
-                              <button
-                                key={metric.project.id}
-                                type="button"
-                                className="project-review-row"
-                                onClick={() => setStatsProjectId(metric.project.id)}
-                              >
-                                <div className="project-review-row__main">
-                                  <span
-                                    className="project-list-item__color"
-                                    style={{ backgroundColor: metric.project.color }}
-                                  ></span>
-                                  <div>
-                                    <strong>{metric.project.name}</strong>
-                                    <span>
-                                      已完成 {metric.doneTodos} / {totalTodos || 0}
-                                    </span>
+                              return (
+                                <button
+                                  key={metric.project.id}
+                                  type="button"
+                                  className="project-review-row"
+                                  onClick={() => setStatsProjectId(metric.project.id)}
+                                >
+                                  <div className="project-review-row__main">
+                                    <span
+                                      className="project-list-item__color"
+                                      style={{ backgroundColor: metric.project.color }}
+                                    ></span>
+                                    <div>
+                                      <strong>{metric.project.name}</strong>
+                                      <span>
+                                        已完成 {metric.doneTodos} / {totalTodos || 0}
+                                      </span>
+                                    </div>
                                   </div>
-                                </div>
-                                <div className="project-review-row__side">
-                                  <strong>{completion}%</strong>
-                                  <div className="project-review-row__bar">
-                                    <div style={{ width: `${completion}%`, backgroundColor: metric.project.color }}></div>
+                                  <div className="project-review-row__side">
+                                    <strong>{completion}%</strong>
+                                    <div className="project-review-row__bar">
+                                      <div style={{ width: `${completion}%`, backgroundColor: metric.project.color }}></div>
+                                    </div>
                                   </div>
-                                </div>
-                              </button>
-                            )
-                          })
-                        ) : (
-                          <EmptyState title="还没有项目复盘" body="先去执行台完成几轮专注。" />
-                        )}
-                      </div>
-                    ) : reviewMetric ? (
-                      <article className="project-metric-card">
-                        <div className="project-metric-card__head">
-                          <div>
-                            <h3>{reviewMetric.project.name}</h3>
-                            <p>
-                              {reviewMetric.doneTodos} 个已完成 / {reviewMetric.openTodos} 个待推进
-                            </p>
-                          </div>
+                                </button>
+                              )
+                            })
+                          ) : (
+                            <EmptyState title="还没有项目复盘" body="先去执行台完成几轮专注。" />
+                          )}
                         </div>
-                        <div className="project-metric-card__stats">
-                          <div className="compact-stat">
-                            <span>实际番茄</span>
-                            <strong>{reviewMetric.completedPomodoros}</strong>
+                      ) : reviewMetric ? (
+                        <article className="project-metric-card">
+                          <div className="project-metric-card__head">
+                            <div>
+                              <h3>{reviewMetric.project.name}</h3>
+                              <p>
+                                {reviewMetric.doneTodos} 个已完成 / {reviewMetric.openTodos} 个待推进
+                              </p>
+                            </div>
                           </div>
-                          <div className="compact-stat">
-                            <span>预估番茄</span>
-                            <strong>{reviewMetric.estimatedPomodoros}</strong>
+                          <div className="project-metric-card__stats">
+                            <div className="compact-stat">
+                              <span>实际番茄</span>
+                              <strong>{reviewMetric.completedPomodoros}</strong>
+                            </div>
+                            <div className="compact-stat">
+                              <span>预估番茄</span>
+                              <strong>{reviewMetric.estimatedPomodoros}</strong>
+                            </div>
+                            <div className="compact-stat">
+                              <span>专注时长</span>
+                              <strong>{formatDuration(reviewMetric.focusDurationSec)}</strong>
+                            </div>
+                            <div className="compact-stat">
+                              <span>中断次数</span>
+                              <strong>{reviewMetric.interruptedCount}</strong>
+                            </div>
                           </div>
-                          <div className="compact-stat">
-                            <span>专注时长</span>
-                            <strong>{formatDuration(reviewMetric.focusDurationSec)}</strong>
-                          </div>
-                          <div className="compact-stat">
-                            <span>中断次数</span>
-                            <strong>{reviewMetric.interruptedCount}</strong>
-                          </div>
-                        </div>
-                      </article>
-                    ) : (
-                      <EmptyState title="没有项目复盘" body="完成几轮专注后这里会自动生成。" />
-                    )}
+                        </article>
+                      ) : (
+                        <EmptyState title="没有项目复盘" body="完成几轮专注后这里会自动生成。" />
+                      )}
+                    </div>
                   </Panel>
                 </div>
 
@@ -3138,7 +3304,10 @@ function App() {
             className="settings-panel"
             onSubmit={(event) => {
               event.preventDefault()
-              void saveSettingsAndRefresh(settingsDraft).then(() => setSettingsOpen(false))
+              void saveSettingsAndRefresh({
+                ...settingsDraft,
+                aiApiKey: settingsApiKeyDraft,
+              }).then(() => setSettingsOpen(false))
             }}
           >
             <div className="settings-row">
@@ -3269,15 +3438,11 @@ function App() {
                   <input
                     type="password"
                     autoComplete="new-password"
-                    value={settingsDraft.aiApiKey}
-                    onChange={(event) =>
-                      setSettingsDraft({
-                        ...settingsDraft,
-                        aiApiKey: event.target.value,
-                      })
-                    }
-                    placeholder="sk-..."
+                    value={settingsApiKeyDraft}
+                    onChange={(event) => setSettingsApiKeyDraft(event.target.value)}
+                    placeholder={settingsDraft.aiApiKeyConfigured ? '留空则保持当前密钥' : 'sk-...'}
                   />
+                  <small className="field-hint">{aiConfiguredHint}</small>
                 </label>
                 <label className="field">
                   <span>Model ID</span>

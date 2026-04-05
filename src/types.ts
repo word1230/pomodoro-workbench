@@ -42,11 +42,11 @@ export interface Todo {
   completedAt: string | null
 }
 
-export interface FocusSession {
+export interface FocusWorkSession {
   id: string
   projectId: string
   todoId: string
-  type: SessionType
+  type: 'focus'
   plannedDurationSec: number
   actualDurationSec: number
   startedAt: string
@@ -54,6 +54,19 @@ export interface FocusSession {
   result: SessionResult
   interruptReason: string | null
 }
+
+export interface BreakSession {
+  id: string
+  type: 'short_break' | 'long_break'
+  plannedDurationSec: number
+  actualDurationSec: number
+  startedAt: string
+  endedAt: string | null
+  result: SessionResult
+  interruptReason: string | null
+}
+
+export type FocusSession = FocusWorkSession | BreakSession
 
 export interface AppSettings {
   focusMinutes: number
@@ -67,8 +80,12 @@ export interface AppSettings {
   launchOnStartup: boolean
   soundEnabled: boolean
   aiBaseUrl: string
-  aiApiKey: string
+  aiApiKeyConfigured: boolean
   aiModelId: string
+}
+
+export interface SaveAppSettingsInput extends AppSettings {
+  aiApiKey: string
 }
 
 export interface AppSnapshot {
@@ -102,10 +119,10 @@ export interface TodoDraft {
   currentStepIndex: number
 }
 
-export interface FocusSessionDraft {
+export interface FocusWorkSessionDraft {
   projectId: string
   todoId: string
-  type: SessionType
+  type: 'focus'
   plannedDurationSec: number
   actualDurationSec: number
   startedAt: string
@@ -113,6 +130,18 @@ export interface FocusSessionDraft {
   result: SessionResult
   interruptReason: string | null
 }
+
+export interface BreakSessionDraft {
+  type: 'short_break' | 'long_break'
+  plannedDurationSec: number
+  actualDurationSec: number
+  startedAt: string
+  endedAt: string | null
+  result: SessionResult
+  interruptReason: string | null
+}
+
+export type FocusSessionDraft = FocusWorkSessionDraft | BreakSessionDraft
 
 export interface TimerState {
   phase: 'idle' | SessionType
@@ -124,6 +153,7 @@ export interface TimerState {
   todoId: string | null
   projectId: string | null
   phaseStartedAt: string | null
+  deadlineAt: string | null
 }
 
 export interface ActivationSession {
@@ -132,6 +162,7 @@ export interface ActivationSession {
   todoId: string | null
   projectId: string | null
   startedAt: string | null
+  deadlineAt: string | null
 }
 
 export interface TodoAiSuggestion {
@@ -149,6 +180,8 @@ export interface TodoActivationRelief {
   quickStartStep: string
   updatedDescription: string
   fallbackStep: string
+  originalQuickStartStep?: string
+  originalDescription?: string
 }
 
 export interface TodoActivationReliefRequest {

@@ -8,13 +8,14 @@ use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tauri::AppHandle;
+use uuid::Uuid;
 
 use crate::{
     db,
     models::{
-        AiReviewSummary, AppSettings, FocusContinuationSuggestion, FocusFeedbackDraft,
-        FocusFeedbackLog, FocusSession, Project, Todo, TodoActivationRelief, TodoAiSuggestion,
-        TodoActivationReliefRequest,
+        AiReviewSummary, FocusContinuationSuggestion, FocusFeedbackDraft,
+        FocusFeedbackLog, FocusSession, InternalAppSettings, Project, Todo,
+        TodoActivationRelief, TodoAiSuggestion, TodoActivationReliefRequest,
     },
 };
 
@@ -126,8 +127,9 @@ pub async fn generate_todo_ai_suggestions(
     project_id: &str,
     todo_ids: &[String],
 ) -> AppResult<Vec<TodoAiSuggestion>> {
+    let settings = db::load_settings(app)?;
+    validate_ai_settings(&settings)?;
     let snapshot = db::load_snapshot(app)?;
-    validate_ai_settings(&snapshot.settings)?;
 
     let project = snapshot
         .projects
@@ -162,7 +164,7 @@ pub async fn generate_todo_ai_suggestions(
     }
 
     let content = request_chat_completion(
-        &snapshot.settings,
+        &settings,
         TODO_AI_SYSTEM_PROMPT,
         build_todo_user_prompt(&project.name, &todos),
     )
@@ -176,8 +178,9 @@ pub async fn generate_ai_review(
     app: &AppHandle,
     project_id: Option<&str>,
 ) -> AppResult<AiReviewSummary> {
+    let settings = db::load_settings(app)?;
+    validate_ai_settings(&settings)?;
     let snapshot = db::load_snapshot(app)?;
-    validate_ai_settings(&snapshot.settings)?;
 
     let scoped_project = match project_id {
         Some(id) => Some(
@@ -225,7 +228,7 @@ pub async fn generate_ai_review(
         .collect::<Vec<_>>();
 
     let content = request_chat_completion(
-        &snapshot.settings,
+        &settings,
         REVIEW_AI_SYSTEM_PROMPT,
         build_review_user_prompt(
             scoped_project.as_ref(),
@@ -245,8 +248,9 @@ pub async fn generate_todo_activation_relief(
     app: &AppHandle,
     request: TodoActivationReliefRequest,
 ) -> AppResult<TodoActivationRelief> {
+    let settings = db::load_settings(app)?;
+    validate_ai_settings(&settings)?;
     let snapshot = db::load_snapshot(app)?;
-    validate_ai_settings(&snapshot.settings)?;
 
     let todo = snapshot
         .todos
@@ -283,7 +287,7 @@ pub async fn generate_todo_activation_relief(
     }
 
     let content = request_chat_completion(
-        &snapshot.settings,
+        &settings,
         ACTIVATION_RELIEF_SYSTEM_PROMPT,
         build_activation_relief_user_prompt(&project.name, &todo, &request),
     )
@@ -296,8 +300,9 @@ pub async fn generate_focus_continuation(
     app: &AppHandle,
     feedback: FocusFeedbackDraft,
 ) -> AppResult<FocusContinuationSuggestion> {
+    let settings = db::load_settings(app)?;
+    validate_ai_settings(&settings)?;
     let snapshot = db::load_snapshot(app)?;
-    validate_ai_settings(&snapshot.settings)?;
 
     let project = snapshot
         .projects
@@ -316,7 +321,29 @@ pub async fn generate_focus_continuation(
         return Err("Archived projects cannot use AI continuation.".to_string());
     }
 
-    let saved_feedback = db::save_focus_feedback_log(app, feedback)?;
+    if let Some(session_id) = feedback.session_id.as_ref() {
+        let session = snapshot
+            .sessions
+            .iter()
+            .find(|item| item.id == *session_id)
+            .ok_or_else(|| "Session not found.".to_string())?;
+        if session.project_id.as_deref() != Some(feedback.project_id.as_str())
+            || session.todo_id.as_deref() != Some(feedback.todo_id.as_str())
+        {
+            return Err("Session does not belong to todo.".to_string());
+        }
+    }
+
+    let current_feedback = FocusFeedbackLog {
+        id: Uuid::new_v4().to_string(),
+        project_id: feedback.project_id.clone(),
+        todo_id: feedback.todo_id.clone(),
+        session_id: feedback.session_id.clone(),
+        completed_text: feedback.completed_text.clone(),
+        issue_text: feedback.issue_text.clone(),
+        risk_text: feedback.risk_text.clone(),
+        created_at: Utc::now().to_rfc3339(),
+    };
     let feedback_history = db::load_recent_focus_feedback_logs(
         app,
         &project.id,
@@ -327,7 +354,7 @@ pub async fn generate_focus_continuation(
         .iter()
         .filter(|session| {
             session.r#type == "focus"
-                && session.project_id == project.id
+                && session.project_id.as_deref() == Some(project.id.as_str())
                 && matches!(session.result.as_str(), "completed" | "interrupted")
         })
         .take(12)
@@ -335,22 +362,24 @@ pub async fn generate_focus_continuation(
         .collect::<Vec<_>>();
 
     let content = request_chat_completion(
-        &snapshot.settings,
+        &settings,
         FOCUS_CONTINUATION_SYSTEM_PROMPT,
         build_focus_continuation_user_prompt(
             &project.name,
             &todo,
-            &saved_feedback,
+            &current_feedback,
             &feedback_history,
             &recent_focus_sessions,
         ),
     )
     .await?;
 
-    parse_focus_continuation_suggestion(&content)
+    let suggestion = parse_focus_continuation_suggestion(&content)?;
+    db::save_focus_feedback_log(app, feedback)?;
+    Ok(suggestion)
 }
 
-fn validate_ai_settings(settings: &AppSettings) -> AppResult<()> {
+fn validate_ai_settings(settings: &InternalAppSettings) -> AppResult<()> {
     if settings.ai_base_url.trim().is_empty()
         || settings.ai_api_key.trim().is_empty()
         || settings.ai_model_id.trim().is_empty()
@@ -365,7 +394,7 @@ fn validate_ai_settings(settings: &AppSettings) -> AppResult<()> {
 }
 
 async fn request_chat_completion(
-    settings: &AppSettings,
+    settings: &InternalAppSettings,
     system_prompt: &str,
     user_prompt: String,
 ) -> AppResult<String> {
@@ -511,6 +540,7 @@ fn build_focus_continuation_user_prompt(
 ) -> String {
     let recent_feedback_payload = feedback_history
         .iter()
+        .filter(|item| item.id != current_feedback.id)
         .take(FOCUS_CONTINUATION_HISTORY_LIMIT as usize)
         .map(|item| {
             json!({
@@ -608,11 +638,11 @@ fn build_review_user_prompt(
                 .collect::<Vec<_>>();
             let focus_count = recent_focus_sessions
                 .iter()
-                .filter(|session| session.project_id == project.id)
+                .filter(|session| session.project_id.as_deref() == Some(project.id.as_str()))
                 .count();
             let interrupted_count = recent_interrupted_sessions
                 .iter()
-                .filter(|session| session.project_id == project.id)
+                .filter(|session| session.project_id.as_deref() == Some(project.id.as_str()))
                 .count();
             json!({
                 "projectName": project.name,
@@ -747,7 +777,7 @@ fn is_recent_session(
         return false;
     }
     if let Some(id) = project_id {
-        if session.project_id != id {
+        if session.project_id.as_deref() != Some(id) {
             return false;
         }
     }
@@ -1112,12 +1142,13 @@ fn to_string(error: impl std::fmt::Display) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_activation_relief_user_prompt, build_chat_completions_url, extract_json_segment,
-        parse_ai_review_summary, parse_focus_continuation_suggestion, parse_todo_activation_relief,
-        parse_todo_suggestions, quick_start_step_uses_ai_channel, todo_requires_ai_direct_action,
-        validate_todo_suggestions, RawTodoAiSuggestion,
+        build_activation_relief_user_prompt, build_chat_completions_url,
+        build_focus_continuation_user_prompt, extract_json_segment, parse_ai_review_summary,
+        parse_focus_continuation_suggestion, parse_todo_activation_relief, parse_todo_suggestions,
+        quick_start_step_uses_ai_channel, todo_requires_ai_direct_action, validate_todo_suggestions,
+        RawTodoAiSuggestion,
     };
-    use crate::models::{Todo, TodoActivationRelief, TodoActivationReliefRequest};
+    use crate::models::{FocusFeedbackLog, Todo, TodoActivationRelief, TodoActivationReliefRequest};
 
     fn sample_todo(id: &str) -> Todo {
         Todo {
@@ -1317,6 +1348,41 @@ mod tests {
         assert!(prompt.contains("need_smaller"));
         assert!(prompt.contains("先打开文档"));
         assert!(prompt.contains("updatedDescription"));
+    }
+
+    #[test]
+    fn build_focus_continuation_user_prompt_excludes_current_feedback_from_history() {
+        let todo = sample_todo("todo-1");
+        let current_feedback = FocusFeedbackLog {
+            id: "current".to_string(),
+            project_id: "project-1".to_string(),
+            todo_id: "todo-1".to_string(),
+            session_id: Some("session-2".to_string()),
+            completed_text: "当前轮完成了事务改造".to_string(),
+            issue_text: "历史日志重复".to_string(),
+            risk_text: "还没跑完测试".to_string(),
+            created_at: "2026-04-05T10:00:00Z".to_string(),
+        };
+        let history = vec![
+            current_feedback.clone(),
+            FocusFeedbackLog {
+                id: "previous".to_string(),
+                project_id: "project-1".to_string(),
+                todo_id: "todo-1".to_string(),
+                session_id: Some("session-1".to_string()),
+                completed_text: "上一轮补齐了 schema 迁移".to_string(),
+                issue_text: String::new(),
+                risk_text: String::new(),
+                created_at: "2026-04-05T09:00:00Z".to_string(),
+            },
+        ];
+
+        let prompt = build_focus_continuation_user_prompt("项目 A", &todo, &current_feedback, &history, &[]);
+        let previous_count = prompt.matches("上一轮补齐了 schema 迁移").count();
+        let current_count = prompt.matches("当前轮完成了事务改造").count();
+
+        assert_eq!(previous_count, 1);
+        assert_eq!(current_count, 1);
     }
 
     #[test]

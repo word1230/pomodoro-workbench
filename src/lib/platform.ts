@@ -11,16 +11,17 @@ import type {
   FocusFeedbackDraft,
   FocusSessionDraft,
   ProjectDraft,
+  SaveAppSettingsInput,
   TodoActivationRelief,
   TodoActivationReliefRequest,
   TodoAiSuggestion,
   TodoDraft,
-} from '../types'
+} from '../types.ts'
 import {
   normalizeTodo,
   normalizeTodoDraft,
   parseTodoSteps,
-} from './todo-steps'
+} from './todo-steps.ts'
 
 declare global {
   interface Window {
@@ -110,7 +111,8 @@ export async function deleteProject(projectId: string): Promise<AppSnapshot> {
   snapshot.projects = snapshot.projects.filter((project) => project.id !== projectId)
   snapshot.todos = snapshot.todos.filter((todo) => todo.projectId !== projectId)
   snapshot.sessions = snapshot.sessions.filter(
-    (session) => session.projectId !== projectId && !todoIds.has(session.todoId),
+    (session) =>
+      session.type !== 'focus' || (session.projectId !== projectId && !todoIds.has(session.todoId)),
   )
   return writeSnapshot(snapshot)
 }
@@ -167,15 +169,18 @@ export async function deleteTodo(todoId: string): Promise<AppSnapshot> {
   }
   const snapshot = readSnapshot()
   snapshot.todos = snapshot.todos.filter((todo) => todo.id !== todoId)
+  snapshot.sessions = snapshot.sessions.filter(
+    (session) => session.type !== 'focus' || session.todoId !== todoId,
+  )
   return writeSnapshot(snapshot)
 }
 
-export async function saveSettings(settings: AppSettings): Promise<AppSnapshot> {
+export async function saveSettings(settings: SaveAppSettingsInput): Promise<AppSnapshot> {
   if (isTauriEnvironment()) {
     return normalizeSnapshot(await invoke<AppSnapshot>('save_settings', { settings }))
   }
   const snapshot = readSnapshot()
-  snapshot.settings = settings
+  snapshot.settings = redactSettings(settings, snapshot.settings.aiApiKeyConfigured)
   return writeSnapshot(snapshot)
 }
 
@@ -309,7 +314,11 @@ export async function showMainWindow(): Promise<void> {
   if (!isTauriEnvironment()) {
     return
   }
-  await invoke('show_main_window')
+  try {
+    await invoke('show_main_window')
+  } catch (error) {
+    console.warn('showMainWindow failed', error)
+  }
 }
 
 export async function requestWindowAttention(active: boolean): Promise<void> {
@@ -366,10 +375,18 @@ export async function listenTrayActions(
 function readSnapshot(): AppSnapshot {
   const raw = localStorage.getItem(STORAGE_KEY)
   if (raw) {
-    const snapshot = JSON.parse(raw) as AppSnapshot
-    return {
-      ...snapshot,
-      todos: snapshot.todos.map((todo) => normalizeTodo(todo)),
+    try {
+      const snapshot = JSON.parse(raw) as AppSnapshot & {
+        settings: AppSettings | SaveAppSettingsInput
+      }
+      const normalizedSnapshot = normalizeSnapshot({
+        ...snapshot,
+        settings: redactSettings(snapshot.settings),
+      })
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizedSnapshot))
+      return normalizedSnapshot
+    } catch (error) {
+      console.warn('readSnapshot failed', error)
     }
   }
   const seeded = buildSeedSnapshot()
@@ -380,10 +397,39 @@ function readSnapshot(): AppSnapshot {
 function writeSnapshot(snapshot: AppSnapshot): AppSnapshot {
   const normalizedSnapshot = {
     ...snapshot,
+    settings: redactSettings(snapshot.settings),
     todos: snapshot.todos.map((todo) => normalizeTodo(todo)),
   }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizedSnapshot))
   return normalizedSnapshot
+}
+
+function redactSettings(
+  settings: AppSettings | SaveAppSettingsInput,
+  existingAiApiKeyConfigured = false,
+): AppSettings {
+  const currentAiApiKeyConfigured =
+    'aiApiKeyConfigured' in settings ? settings.aiApiKeyConfigured : false
+  const nextAiApiKeyConfigured =
+    'aiApiKey' in settings
+      ? Boolean(settings.aiApiKey.trim()) || currentAiApiKeyConfigured || existingAiApiKeyConfigured
+      : currentAiApiKeyConfigured
+
+  return {
+    focusMinutes: settings.focusMinutes,
+    shortBreakMinutes: settings.shortBreakMinutes,
+    longBreakMinutes: settings.longBreakMinutes,
+    longBreakInterval: settings.longBreakInterval,
+    autoStartBreaks: settings.autoStartBreaks,
+    autoStartFocus: settings.autoStartFocus,
+    notificationsEnabled: settings.notificationsEnabled,
+    minimizeToTray: settings.minimizeToTray,
+    launchOnStartup: settings.launchOnStartup,
+    soundEnabled: settings.soundEnabled,
+    aiBaseUrl: settings.aiBaseUrl,
+    aiApiKeyConfigured: nextAiApiKeyConfigured,
+    aiModelId: settings.aiModelId,
+  }
 }
 
 function buildSeedSnapshot(): AppSnapshot {
@@ -408,7 +454,7 @@ function buildSeedSnapshot(): AppSnapshot {
     launchOnStartup: false,
     soundEnabled: true,
     aiBaseUrl: '',
-    aiApiKey: '',
+    aiApiKeyConfigured: false,
     aiModelId: '',
   }
 

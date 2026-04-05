@@ -10,20 +10,35 @@ export const idleTimer: TimerState = {
   todoId: null,
   projectId: null,
   phaseStartedAt: null,
+  deadlineAt: null,
 }
 
-export function resolveNextTimerTick(current: TimerState): {
+export function resolveNextTimerTick(
+  current: TimerState,
+  now = new Date(),
+): {
   nextTimer: TimerState
   completedPhase: TimerState | null
 } {
-  if (!current.running || current.phase === 'idle') {
+  if (current.phase === 'idle' || !current.running) {
     return {
       nextTimer: current,
       completedPhase: null,
     }
   }
 
-  if (current.remainingSec <= 1) {
+  if (!current.todoId || !current.projectId || !current.phaseStartedAt) {
+    return {
+      nextTimer: {
+        ...current,
+        running: false,
+      },
+      completedPhase: null,
+    }
+  }
+
+  const remainingSec = resolveRemainingSec(current.deadlineAt, current.remainingSec, now)
+  if (remainingSec <= 0) {
     const completedPhase = {
       ...current,
       remainingSec: 0,
@@ -39,7 +54,7 @@ export function resolveNextTimerTick(current: TimerState): {
   return {
     nextTimer: {
       ...current,
-      remainingSec: current.remainingSec - 1,
+      remainingSec,
     },
     completedPhase: null,
   }
@@ -47,4 +62,47 @@ export function resolveNextTimerTick(current: TimerState): {
 
 export function shouldFinalizeTimerPhase(timer: TimerState): boolean {
   return timer.phase !== 'idle' && !timer.running && timer.remainingSec === 0
+}
+
+export function setTimerRunning(current: TimerState, running: boolean, now = new Date()): TimerState {
+  if (current.phase === 'idle') {
+    return current
+  }
+
+  if (!running) {
+    return {
+      ...current,
+      running: false,
+      deadlineAt: null,
+    }
+  }
+
+  if (!current.todoId || !current.projectId || !current.phaseStartedAt) {
+    return {
+      ...current,
+      running: false,
+      deadlineAt: null,
+    }
+  }
+
+  return {
+    ...current,
+    running: true,
+    deadlineAt: new Date(now.getTime() + Math.max(0, current.remainingSec) * 1000).toISOString(),
+  }
+}
+
+function resolveRemainingSec(deadlineAt: string | null, fallbackRemainingSec: number, now: Date): number {
+  if (deadlineAt) {
+    const deadline = new Date(deadlineAt)
+    if (!Number.isNaN(deadline.getTime())) {
+      return Math.max(0, Math.ceil((deadline.getTime() - now.getTime()) / 1000))
+    }
+  }
+
+  if (fallbackRemainingSec <= 1) {
+    return 0
+  }
+
+  return fallbackRemainingSec - 1
 }

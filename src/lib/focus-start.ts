@@ -84,16 +84,17 @@ function getResumeTodoId(snapshot: AppSnapshot, projectId: string | null): strin
   )
 
   const focusSessions = [...snapshot.sessions]
-    .filter((session) => session.type === 'focus' && launchableTodoIds.has(session.todoId))
+    .filter(
+      (session): session is Extract<(typeof snapshot.sessions)[number], { type: 'focus' }> =>
+        session.type === 'focus' && launchableTodoIds.has(session.todoId),
+    )
     .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
 
-  const interrupted = focusSessions.find((session) => session.result === 'interrupted')
-  if (interrupted) {
-    return interrupted.todoId
-  }
+  const recentResumableSession = focusSessions.find(
+    (session) => session.result === 'interrupted' || session.result === 'completed',
+  )
 
-  const recentProgress = focusSessions.find((session) => session.result === 'completed')
-  return recentProgress?.todoId ?? null
+  return recentResumableSession?.todoId ?? null
 }
 
 function compareFocusStartTodo(

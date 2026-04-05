@@ -24,7 +24,7 @@ const baseSnapshot: AppSnapshot = {
     launchOnStartup: false,
     soundEnabled: true,
     aiBaseUrl: 'https://api.example.com/v1',
-    aiApiKey: 'test-key',
+    aiApiKeyConfigured: true,
     aiModelId: 'gpt-test',
   },
   projects: [
@@ -85,6 +85,54 @@ test('getAiReviewEligibility passes when current scope has enough data', () => {
   const result = getAiReviewEligibility(baseSnapshot, 'project-1', new Date('2026-04-07T12:00:00.000Z'))
   assert.equal(result.canGenerate, true)
   assert.equal(result.reason, null)
+})
+
+test('getAiReviewEligibility excludes sessions completed on the calendar day before the trailing 7-day window', () => {
+  const boundarySnapshot = {
+    ...baseSnapshot,
+    sessions: [
+      ...baseSnapshot.sessions.slice(0, AI_REVIEW_MINIMUM_FOCUS_SESSIONS - 1),
+      {
+        ...baseSnapshot.sessions[0],
+        id: 'session-before-window',
+        startedAt: new Date(2026, 2, 31, 23, 30, 0, 0).toISOString(),
+        endedAt: new Date(2026, 2, 31, 23, 55, 0, 0).toISOString(),
+      },
+    ],
+  }
+
+  const result = getAiReviewEligibility(boundarySnapshot, 'project-1', new Date('2026-04-07T12:00:00.000Z'))
+
+  assert.equal(result.canGenerate, false)
+  assert.equal(result.focusCount, AI_REVIEW_MINIMUM_FOCUS_SESSIONS - 1)
+})
+
+test('getAiReviewEligibility still passes when todos in scope no longer exist', () => {
+  const snapshotWithoutTodos = {
+    ...baseSnapshot,
+    todos: [],
+  }
+
+  const result = getAiReviewEligibility(snapshotWithoutTodos, 'project-1', new Date('2026-04-07T12:00:00.000Z'))
+  assert.equal(result.canGenerate, true)
+  assert.equal(result.reason, null)
+})
+
+test('getAiReviewEligibility counts sessions when completed focus has null endedAt', () => {
+  const sessionWithNullEnd = {
+    ...baseSnapshot.sessions[0],
+    id: 'session-null-ended-at',
+    startedAt: '2026-04-07T11:40:00.000Z',
+    endedAt: null,
+  }
+  const snapshotWithNullEndedAt = {
+    ...baseSnapshot,
+    sessions: [sessionWithNullEnd, ...baseSnapshot.sessions.slice(1)],
+  }
+
+  const result = getAiReviewEligibility(snapshotWithNullEndedAt, 'project-1', new Date('2026-04-07T12:00:00.000Z'))
+  assert.equal(result.canGenerate, true)
+  assert.equal(result.focusCount, AI_REVIEW_MINIMUM_FOCUS_SESSIONS)
 })
 
 test('format review labels uses scope and timeframe', () => {

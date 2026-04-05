@@ -1,0 +1,23 @@
+readSnapshot failed SyntaxError: Expected property name or '}' in JSON at position 1 (line 1 column 2)
+    at JSON.parse (<anonymous>)
+    at readSnapshot (file:///D:/Project/myproject/pomodoro-workbench/src/lib/platform.ts:376:29)
+    at loadSnapshot (file:///D:/Project/myproject/pomodoro-workbench/src/lib/platform.ts:52:10)
+    at TestContext.<anonymous> (file:///D:/Project/myproject/pomodoro-workbench/tests/platform.test.ts:193:26)
+    at Test.runInAsyncScope (node:async_hooks:228:14)
+    at Test.run (node:internal/test_runner/test:1118:25)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:787:7)
+✔ buildSnapshot keeps public settings redacted by default (1.1379ms)
+✔ loadSnapshot recovers from invalid localStorage JSON by reseeding snapshot (7.7374ms)
+✔ showMainWindow swallows backend invoke failures in tauri mode (0.4946ms)
+✔ loadSnapshot removes legacy plaintext API keys from persisted local snapshot state (0.6929ms)
+✔ saveSettings does not persist plaintext API keys in public local snapshot state (0.6157ms)
+✔ saveSettings preserves configured API key state when password field is submitted empty (0.422ms)
+✔ deleteTodo removes the target todo and only its related sessions in localStorage mode (1.3276ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 214.0261

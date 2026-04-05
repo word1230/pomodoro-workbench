@@ -18,7 +18,7 @@ function buildSnapshot(): AppSnapshot {
       launchOnStartup: false,
       soundEnabled: true,
       aiBaseUrl: '',
-      aiApiKey: '',
+      aiApiKeyConfigured: false,
       aiModelId: '',
     },
     projects: [
@@ -110,9 +110,70 @@ function buildSnapshot(): AppSnapshot {
 
 test('getFocusStartSuggestion prioritizes recently interrupted work as resume candidate', () => {
   const snapshot = buildSnapshot()
+  snapshot.sessions = [
+    {
+      id: 'session-1',
+      projectId: 'project-1',
+      todoId: 'todo-1',
+      type: 'focus',
+      plannedDurationSec: 1500,
+      actualDurationSec: 1500,
+      startedAt: '2026-04-02T09:00:00.000Z',
+      endedAt: '2026-04-02T09:25:00.000Z',
+      result: 'completed',
+      interruptReason: null,
+    },
+    {
+      id: 'session-2',
+      projectId: 'project-1',
+      todoId: 'todo-2',
+      type: 'focus',
+      plannedDurationSec: 1500,
+      actualDurationSec: 900,
+      startedAt: '2026-04-02T11:00:00.000Z',
+      endedAt: '2026-04-02T11:15:00.000Z',
+      result: 'interrupted',
+      interruptReason: '被会议打断',
+    },
+  ]
   const suggestion = getFocusStartSuggestion(snapshot, 'project-1')
 
   assert.equal(suggestion.todoId, 'todo-2')
+  assert.equal(suggestion.isResume, true)
+})
+
+test('getFocusStartSuggestion does not resume an older interrupted task over newer completed work', () => {
+  const snapshot = buildSnapshot()
+  snapshot.sessions = [
+    {
+      id: 'session-1',
+      projectId: 'project-1',
+      todoId: 'todo-2',
+      type: 'focus',
+      plannedDurationSec: 1500,
+      actualDurationSec: 900,
+      startedAt: '2026-04-02T09:00:00.000Z',
+      endedAt: '2026-04-02T09:15:00.000Z',
+      result: 'interrupted',
+      interruptReason: '切去处理别的事',
+    },
+    {
+      id: 'session-2',
+      projectId: 'project-1',
+      todoId: 'todo-1',
+      type: 'focus',
+      plannedDurationSec: 1500,
+      actualDurationSec: 1500,
+      startedAt: '2026-04-02T11:00:00.000Z',
+      endedAt: '2026-04-02T11:25:00.000Z',
+      result: 'completed',
+      interruptReason: null,
+    },
+  ]
+
+  const suggestion = getFocusStartSuggestion(snapshot, 'project-1')
+
+  assert.equal(suggestion.todoId, 'todo-1')
   assert.equal(suggestion.isResume, true)
 })
 

@@ -15,9 +15,10 @@ use db::{
     save_project as save_project_db, save_settings as save_settings_db, save_todo as save_todo_db, should_minimize_to_tray,
 };
 use models::{
-    AiReviewRecord, AiReviewRecordDraft, AiReviewSummary, AppSettings, AppSnapshot,
+    AiReviewRecord, AiReviewRecordDraft, AiReviewSummary, AppSnapshot,
     FocusContinuationSuggestion, FocusFeedbackDraft, FocusSessionDraft, ProjectDraft,
-    TodoActivationRelief, TodoActivationReliefRequest, TodoAiSuggestion, TodoDraft,
+    SaveAppSettingsInput, TodoActivationRelief, TodoActivationReliefRequest, TodoAiSuggestion,
+    TodoDraft,
 };
 use tauri::{
     menu::MenuBuilder,
@@ -63,7 +64,7 @@ fn delete_todo(app: AppHandle, todo_id: String) -> AppResult<AppSnapshot> {
 }
 
 #[tauri::command]
-fn save_settings(app: AppHandle, settings: AppSettings) -> AppResult<AppSnapshot> {
+fn save_settings(app: AppHandle, settings: SaveAppSettingsInput) -> AppResult<AppSnapshot> {
     let snapshot = save_settings_db(&app, settings)?;
     sync_autostart(&app)?;
     Ok(snapshot)
