@@ -33,6 +33,7 @@ import { getFocusStartSuggestion, getFocusStartTodos } from './lib/focus-start'
 import { idleTimer, resolveNextTimerTick, setTimerRunning, shouldFinalizeTimerPhase } from './lib/timer-tick'
 import {
   archiveProject,
+  clearAllData,
   deleteProject,
   deleteTodo,
   generateAiReview,
@@ -265,6 +266,7 @@ function App() {
     | { type: 'complete-todo'; todoId: string }
     | { type: 'archive-project'; projectId: string }
     | { type: 'delete-project'; projectId: string }
+    | { type: 'clear-all-data' }
     | null
   >(null)
   const [selectedAiTodoIds, setSelectedAiTodoIds] = useState<string[]>([])
@@ -1414,6 +1416,36 @@ function App() {
   const handleDeleteProject = async (project: Project) => {
     await syncSnapshot(deleteProject(project.id), { message: '项目已删除' })
     setConfirmState(null)
+  }
+
+  const handleClearAllData = async () => {
+    const next = await syncSnapshot(clearAllData(), { message: '全部数据已清空' })
+    if (!next) {
+      return
+    }
+
+    setAiReviewHistory([])
+    setSelectedAiReviewRecord(null)
+    setAiReviewDraft(null)
+    setSelectedProjectId(null)
+    setManageProjectId(null)
+    setStatsProjectId(null)
+    setSelectedTodoId(null)
+    setSelectedAiTodoIds([])
+    setTodoAiPreview([])
+    setTodoAiPreviewOpen(false)
+    setTodoActivationRelief(null)
+    setFocusFeedbackDraft(null)
+    setFocusContinuationSuggestion(null)
+    setFocusContinuationDraft([])
+    setFocusContinuationQuickStartDraft('')
+    setTimer(idleTimer)
+    setActivationSession(idleActivationSession)
+    setActivationDecisionTodoId(null)
+    setPhaseAlertPrompt(null)
+    setSettingsApiKeyDraft('')
+    setConfirmState(null)
+    setSettingsOpen(false)
   }
 
   const closeTodoAiPreview = () => {
@@ -3461,6 +3493,24 @@ function App() {
               <p className="settings-note">API Key 仅保存在本机数据库，桌面端会直接调用你填写的兼容接口。</p>
             </section>
 
+            <section className="settings-section settings-section--danger">
+              <div className="settings-section__head">
+                <div>
+                  <h4>危险操作</h4>
+                  <p>删除所有项目、任务、记录，并将设置恢复默认。此操作不可撤销。</p>
+                </div>
+              </div>
+              <div className="settings-danger__actions">
+                <button
+                  type="button"
+                  className="action-button action-button--ghost"
+                  onClick={() => setConfirmState({ type: 'clear-all-data' })}
+                >
+                  清空全部数据
+                </button>
+              </div>
+            </section>
+
             <button type="submit" className="action-button action-button--primary">
               保存设置
             </button>
@@ -3888,7 +3938,9 @@ function App() {
               ? '确认完成代办'
               : confirmState.type === 'archive-project'
                 ? '确认归档项目'
-                : '确认删除项目'
+                : confirmState.type === 'delete-project'
+                  ? '确认删除项目'
+                  : '确认清空全部数据'
           }
           className="modal-card--compact"
           onClose={() => setConfirmState(null)}
@@ -3902,17 +3954,19 @@ function App() {
                       ? `「${todo.title}」还有 ${getRemainingPomodoros(todo)} 个番茄未完成，仍然标记为完成？`
                       : '确认将这条代办标记为完成？'
                   })()
-                : (() => {
-                    const project = projects.find((item) => item.id === confirmState.projectId)
-                    if (confirmState.type === 'archive-project') {
+                : confirmState.type === 'clear-all-data'
+                  ? '这会永久清空所有项目、代办、专注/休息记录、AI 复盘历史与反馈日志，并将设置恢复为默认值（包括清除 API Key、关闭开机自启）。此操作不可撤销，确认继续？'
+                  : (() => {
+                      const project = projects.find((item) => item.id === confirmState.projectId)
+                      if (confirmState.type === 'archive-project') {
+                        return project
+                          ? `「${project.name}」会移入归档列表，确认继续？`
+                          : '确认归档这个项目？'
+                      }
                       return project
-                        ? `「${project.name}」会移入归档列表，确认继续？`
-                        : '确认归档这个项目？'
-                    }
-                    return project
-                      ? `「${project.name}」及其全部代办和专注记录会被永久移除，确认删除？`
-                      : '确认删除这个项目？'
-                  })()}
+                        ? `「${project.name}」及其全部代办和专注记录会被永久移除，确认删除？`
+                        : '确认删除这个项目？'
+                    })()}
             </p>
             <div className="modal-form__actions">
               <button type="button" className="action-button action-button--ghost" onClick={() => setConfirmState(null)}>
@@ -3931,6 +3985,11 @@ function App() {
                     return
                   }
 
+                  if (confirmState.type === 'clear-all-data') {
+                    await handleClearAllData()
+                    return
+                  }
+
                   const project = projects.find((item) => item.id === confirmState.projectId)
                   if (!project) {
                     setConfirmState(null)
@@ -3945,7 +4004,7 @@ function App() {
                   await handleDeleteProject(project)
                 }}
               >
-                确认
+                {confirmState.type === 'clear-all-data' ? '清空并恢复默认' : '确认'}
               </button>
             </div>
           </div>
