@@ -176,3 +176,96 @@ test('App.tsx opens direct helper dialogs instead of a tabbed launcher', async (
   assert.doesNotMatch(appTsx, /type LaunchMoreTab\s*=/)
   assert.doesNotMatch(appTsx, /title="更多选项"/)
 })
+
+test('focus launch renders helper tools in the launch panel header actions', async () => {
+  const appTsx = await readFile(appTsxPath, 'utf8')
+
+  const launchPanelBlock = extractBlock(
+    appTsx,
+    /<Panel\s+title="启动台"[\s\S]*?<\/Panel>/,
+    'expected the launch panel block to exist',
+  )
+  const actionsBlock = extractBlock(
+    launchPanelBlock,
+    /actions=\{[\s\S]*?<div className="launch-panel-actions">[\s\S]*?<\/div>\s*\}/,
+    'expected the launch panel to define header actions',
+  )
+
+  assert.match(actionsBlock, /className="launch-panel-actions"/)
+  assert.match(actionsBlock, /<FocusLaunchHelperTools/)
+  assert.ok(
+    actionsBlock.includes("selectedProject ? `项目：${selectedProject.name}` : '选择项目'"),
+    'expected the project picker button label to remain in the launch panel actions',
+  )
+
+  const helperToolsIndex = actionsBlock.indexOf('<FocusLaunchHelperTools')
+  const projectButtonIndex = actionsBlock.indexOf("selectedProject ? `项目：${selectedProject.name}` : '选择项目'")
+  const helperToolsMatches = launchPanelBlock.match(/<FocusLaunchHelperTools/g) ?? []
+
+  assert.notStrictEqual(helperToolsIndex, -1, 'expected helper tools to render in the launch panel actions')
+  assert.notStrictEqual(projectButtonIndex, -1, 'expected project button label in the launch panel actions')
+  assert.equal(helperToolsMatches.length, 1, 'expected helper tools to render only once in the launch panel')
+  assert.ok(
+    helperToolsIndex < projectButtonIndex,
+    'expected helper tools to appear before the project button in the launch panel actions',
+  )
+  assert.doesNotMatch(
+    launchPanelBlock,
+    /focus-kickoff__footer-quick-actions[\s\S]*<FocusLaunchHelperTools/,
+    'expected helper tools to leave the footer quick-actions area',
+  )
+})
+
+test('focus launch renders planned pomodoros above the timer support panel', async () => {
+  const appTsx = await readFile(appTsxPath, 'utf8')
+
+  const launchPanelBlock = extractBlock(
+    appTsx,
+    /<Panel\s+title="启动台"[\s\S]*?<\/Panel>/,
+    'expected the launch panel block to exist',
+  )
+  const supportPanelBlock = extractBlock(
+    appTsx,
+    /<Panel\s+title="计时栏"[\s\S]*?<\/Panel>/,
+    'expected the support panel block to exist',
+  )
+
+  assert.match(supportPanelBlock, /className="support-panel support-panel--plan"/)
+  assert.match(supportPanelBlock, /className="support-plan-card"/)
+  assert.match(supportPanelBlock, /<span className="support-plan-card__label">本轮计划<\/span>/)
+  assert.match(supportPanelBlock, /value=\{plannedPomodoros\}/)
+  assert.match(supportPanelBlock, /onBlur=\{\(\) => void handlePlannedPomodorosSave\(\)\}/)
+
+  const planBlockIndex = supportPanelBlock.indexOf('support-panel support-panel--plan')
+  const timerBlockIndex = supportPanelBlock.indexOf('support-panel--timer')
+
+  assert.notStrictEqual(planBlockIndex, -1, 'expected a planned pomodoros support panel')
+  assert.notStrictEqual(timerBlockIndex, -1, 'expected a timer support panel')
+  assert.ok(planBlockIndex < timerBlockIndex, 'expected the planned pomodoros panel above the timer panel')
+  assert.doesNotMatch(
+    launchPanelBlock,
+    /focus-kickoff__footer-group focus-kickoff__footer-group--plan[\s\S]*value=\{plannedPomodoros\}/,
+    'expected the planned pomodoros control to leave the launch footer',
+  )
+})
+
+test('App.css defines header helper tool layout and support-side plan card styles', async () => {
+  const css = await readFile(appCssPath, 'utf8')
+
+  const launchPanelActionsRule = extractRuleBlock(css, '.launch-panel-actions')
+  assert.match(launchPanelActionsRule, /display:\s*inline-flex;/)
+  assert.match(launchPanelActionsRule, /align-items:\s*center;/)
+  assert.match(launchPanelActionsRule, /flex-wrap:\s*wrap;/)
+
+  const supportPlanPanelRule = extractRuleBlock(css, '.panel--support-shell .support-panel--plan')
+  assert.match(supportPlanPanelRule, /padding-top:\s*0;/)
+  assert.match(supportPlanPanelRule, /border-top:\s*0;/)
+
+  const supportPlanCardRule = extractRuleBlock(css, '.support-plan-card')
+  assert.match(supportPlanCardRule, /display:\s*grid;/)
+  assert.match(supportPlanCardRule, /justify-items:\s*center;/)
+
+  const supportPlanFieldRule = extractRuleBlock(css, '.support-plan-card .focus-kickoff__footer-plan-field')
+  assert.match(supportPlanFieldRule, /min-height:\s*56px;/)
+})
+

@@ -1996,14 +1996,24 @@ function App() {
                 className="panel--launch"
                 bodyClassName="launch-panel-body"
                 actions={
-                  <button
-                    type="button"
-                    className="action-button action-button--compact"
-                    onClick={() => setProjectPickerMode('focus')}
-                    disabled={focusInteractionLocked}
-                  >
-                    {selectedProject ? `项目：${selectedProject.name}` : '选择项目'}
-                  </button>
+                  <div className="launch-panel-actions">
+                    {selectedTodo ? (
+                      <FocusLaunchHelperTools
+                        canReview={Boolean(latestCompletedFocusSessionId)}
+                        onOpenSteps={() => openTodoEditor(selectedTodo)}
+                        onOpenAssist={() => openFocusHelperDialog('assist')}
+                        onOpenReview={() => openFocusHelperDialog('review')}
+                      />
+                    ) : null}
+                    <button
+                      type="button"
+                      className="action-button action-button--compact"
+                      onClick={() => setProjectPickerMode('focus')}
+                      disabled={focusInteractionLocked}
+                    >
+                      {selectedProject ? `项目：${selectedProject.name}` : '选择项目'}
+                    </button>
+                  </div>
                 }
               >
                 {selectedTodo ? (
@@ -2100,30 +2110,6 @@ function App() {
                               </button>
                             </div>
                           </details>
-                          <div className="focus-kickoff__footer-group focus-kickoff__footer-group--plan">
-                            <span className="focus-kickoff__footer-label">本轮计划</span>
-                            <label className="focus-kickoff__footer-plan-field">
-                              <input
-                                type="number"
-                                min={1}
-                                max={20}
-                                value={plannedPomodoros}
-                                disabled={focusInteractionLocked}
-                                onChange={(event) =>
-                                  setPlannedPomodoros(Math.max(1, Math.min(20, Number(event.target.value) || 1)))
-                                }
-                                onBlur={() => void handlePlannedPomodorosSave()}
-                              />
-                              <small>个番茄</small>
-                            </label>
-                          </div>
-
-                          <FocusLaunchHelperTools
-                            canReview={Boolean(latestCompletedFocusSessionId)}
-                            onOpenSteps={() => openTodoEditor(selectedTodo)}
-                            onOpenAssist={() => openFocusHelperDialog('assist')}
-                            onOpenReview={() => openFocusHelperDialog('review')}
-                          />
                         </div>
 
                       </section>
@@ -2419,6 +2405,26 @@ function App() {
                   </button>
                 }
               >
+                <div className="support-panel support-panel--plan">
+                  <div className="support-plan-card">
+                    <span className="support-plan-card__label">本轮计划</span>
+                    <label className="focus-kickoff__footer-plan-field">
+                      <input
+                        type="number"
+                        min={1}
+                        max={20}
+                        value={plannedPomodoros}
+                        disabled={focusInteractionLocked}
+                        onChange={(event) =>
+                          setPlannedPomodoros(Math.max(1, Math.min(20, Number(event.target.value) || 1)))
+                        }
+                        onBlur={() => void handlePlannedPomodorosSave()}
+                      />
+                      <small>个番茄</small>
+                    </label>
+                  </div>
+                </div>
+
                 <div className="support-panel support-panel--timer">
                   <div className="support-timer">
                     <div className="support-timer__head">
