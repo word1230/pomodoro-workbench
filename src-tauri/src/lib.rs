@@ -9,10 +9,11 @@ use ai::{
     generate_todo_ai_suggestions as generate_todo_ai_suggestions_service,
 };
 use db::{
-    archive_project as archive_project_db, delete_project as delete_project_db, delete_todo as delete_todo_db, init_database,
-    load_ai_reviews as load_ai_reviews_db, load_settings, load_snapshot as load_snapshot_db,
-    record_focus_session as record_focus_session_db, save_ai_review as save_ai_review_db,
-    save_project as save_project_db, save_settings as save_settings_db, save_todo as save_todo_db, should_minimize_to_tray,
+    archive_project as archive_project_db, clear_all_data as clear_all_data_db, delete_project as delete_project_db,
+    delete_todo as delete_todo_db, init_database, load_ai_reviews as load_ai_reviews_db, load_settings,
+    load_snapshot as load_snapshot_db, record_focus_session as record_focus_session_db,
+    save_ai_review as save_ai_review_db, save_project as save_project_db, save_settings as save_settings_db,
+    save_todo as save_todo_db, should_minimize_to_tray,
 };
 use models::{
     AiReviewRecord, AiReviewRecordDraft, AiReviewSummary, AppSnapshot,
@@ -66,6 +67,13 @@ fn delete_todo(app: AppHandle, todo_id: String) -> AppResult<AppSnapshot> {
 #[tauri::command]
 fn save_settings(app: AppHandle, settings: SaveAppSettingsInput) -> AppResult<AppSnapshot> {
     let snapshot = save_settings_db(&app, settings)?;
+    sync_autostart(&app)?;
+    Ok(snapshot)
+}
+
+#[tauri::command]
+fn clear_all_data(app: AppHandle) -> AppResult<AppSnapshot> {
+    let snapshot = clear_all_data_db(&app)?;
     sync_autostart(&app)?;
     Ok(snapshot)
 }
@@ -160,6 +168,7 @@ pub fn run() {
             save_todo,
             delete_todo,
             save_settings,
+            clear_all_data,
             record_focus_session,
             notify_phase,
             update_tray_status,

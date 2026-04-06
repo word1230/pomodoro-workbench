@@ -132,6 +132,14 @@ pub fn save_settings(app: &AppHandle, settings: SaveAppSettingsInput) -> AppResu
     save_settings_with_connection(&connection, settings)
 }
 
+pub fn clear_all_data(app: &AppHandle) -> AppResult<AppSnapshot> {
+    let mut connection = connection(app)?;
+    create_schema(&connection)?;
+    ensure_settings(&connection)?;
+    clear_all_data_with_connection(&mut connection)?;
+    load_snapshot_from_connection(&connection)
+}
+
 pub fn record_focus_session(app: &AppHandle, session: FocusSessionDraft) -> AppResult<AppSnapshot> {
     let mut connection = connection(app)?;
     create_schema(&connection)?;
@@ -589,6 +597,24 @@ fn find_matching_focus_feedback_log(
         .map_err(to_string)
 }
 
+fn default_internal_settings() -> InternalAppSettings {
+    InternalAppSettings {
+        focus_minutes: 25,
+        short_break_minutes: 5,
+        long_break_minutes: 15,
+        long_break_interval: 4,
+        auto_start_breaks: true,
+        auto_start_focus: false,
+        notifications_enabled: true,
+        minimize_to_tray: true,
+        launch_on_startup: false,
+        sound_enabled: true,
+        ai_base_url: String::new(),
+        ai_api_key: String::new(),
+        ai_model_id: String::new(),
+    }
+}
+
 fn load_snapshot_from_connection(connection: &Connection) -> AppResult<AppSnapshot> {
     Ok(AppSnapshot {
         settings: redact_settings(load_settings_from_connection(connection)?),
@@ -614,6 +640,59 @@ fn redact_settings(settings: InternalAppSettings) -> AppSettings {
         ai_api_key_configured: !settings.ai_api_key.trim().is_empty(),
         ai_model_id: settings.ai_model_id,
     }
+}
+
+fn clear_all_data_with_connection(connection: &mut Connection) -> AppResult<()> {
+    let transaction = connection.transaction().map_err(to_string)?;
+    transaction
+        .execute("DELETE FROM focus_feedback_logs", [])
+        .map_err(to_string)?;
+    transaction
+        .execute("DELETE FROM ai_reviews", [])
+        .map_err(to_string)?;
+    transaction
+        .execute("DELETE FROM focus_sessions", [])
+        .map_err(to_string)?;
+    transaction
+        .execute("DELETE FROM todos", [])
+        .map_err(to_string)?;
+    transaction
+        .execute("DELETE FROM projects", [])
+        .map_err(to_string)?;
+
+    reset_settings_to_defaults(&transaction)?;
+    transaction.commit().map_err(to_string)?;
+    Ok(())
+}
+
+fn reset_settings_to_defaults(connection: &Connection) -> AppResult<()> {
+    let defaults = default_internal_settings();
+    connection
+        .execute(
+            "UPDATE settings
+             SET focus_minutes = ?1, short_break_minutes = ?2, long_break_minutes = ?3,
+                 long_break_interval = ?4, auto_start_breaks = ?5, auto_start_focus = ?6,
+                 notifications_enabled = ?7, minimize_to_tray = ?8, launch_on_startup = ?9, sound_enabled = ?10,
+                 ai_base_url = ?11, ai_api_key = ?12, ai_model_id = ?13
+             WHERE id = 1",
+            params![
+                defaults.focus_minutes,
+                defaults.short_break_minutes,
+                defaults.long_break_minutes,
+                defaults.long_break_interval,
+                bool_to_int(defaults.auto_start_breaks),
+                bool_to_int(defaults.auto_start_focus),
+                bool_to_int(defaults.notifications_enabled),
+                bool_to_int(defaults.minimize_to_tray),
+                bool_to_int(defaults.launch_on_startup),
+                bool_to_int(defaults.sound_enabled),
+                defaults.ai_base_url,
+                defaults.ai_api_key,
+                defaults.ai_model_id,
+            ],
+        )
+        .map_err(to_string)?;
+    Ok(())
 }
 
 fn save_settings_with_connection(
@@ -947,14 +1026,30 @@ fn create_schema(connection: &Connection) -> AppResult<()> {
 }
 
 fn ensure_settings(connection: &Connection) -> AppResult<()> {
+    let defaults = default_internal_settings();
     connection
         .execute(
             "INSERT OR IGNORE INTO settings (
                 id, focus_minutes, short_break_minutes, long_break_minutes, long_break_interval,
                 auto_start_breaks, auto_start_focus, notifications_enabled, minimize_to_tray,
                 launch_on_startup, sound_enabled, ai_base_url, ai_api_key, ai_model_id
-             ) VALUES (1, 25, 5, 15, 4, 1, 0, 1, 1, 0, 1, '', '', '')",
-            [],
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            params![
+                1,
+                defaults.focus_minutes,
+                defaults.short_break_minutes,
+                defaults.long_break_minutes,
+                defaults.long_break_interval,
+                bool_to_int(defaults.auto_start_breaks),
+                bool_to_int(defaults.auto_start_focus),
+                bool_to_int(defaults.notifications_enabled),
+                bool_to_int(defaults.minimize_to_tray),
+                bool_to_int(defaults.launch_on_startup),
+                bool_to_int(defaults.sound_enabled),
+                defaults.ai_base_url,
+                defaults.ai_api_key,
+                defaults.ai_model_id,
+            ],
         )
         .map_err(to_string)?;
     Ok(())
@@ -1433,10 +1528,11 @@ fn to_string(error: impl std::fmt::Display) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        create_schema, ensure_settings, insert_focus_feedback_log, load_settings_from_connection,
-        load_snapshot_from_connection, prepare_focus_feedback_log_with_connection,
-        record_focus_session_with_connection, save_focus_feedback_log_with_connection,
-        save_settings_with_connection, save_todo_with_connection, table_column_allows_null,
+        clear_all_data_with_connection, create_schema, ensure_settings, insert_focus_feedback_log,
+        load_settings_from_connection, load_snapshot_from_connection,
+        prepare_focus_feedback_log_with_connection, record_focus_session_with_connection,
+        save_focus_feedback_log_with_connection, save_settings_with_connection,
+        save_todo_with_connection, seed_if_empty, table_column_allows_null,
     };
     use crate::models::{
         FocusFeedbackDraft, FocusFeedbackLog, SaveAppSettingsInput, TodoDraft,
@@ -1823,6 +1919,103 @@ mod tests {
         assert_eq!(internal_settings.ai_api_key, "super-secret");
         assert_eq!(internal_settings.ai_base_url, "https://api.example.com/v1");
         assert_eq!(internal_settings.ai_model_id, "gpt-4.1-mini");
+    }
+
+    #[test]
+    fn clear_all_data_with_connection_removes_business_data_and_resets_settings() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database should open");
+        create_schema(&connection).expect("schema should initialize");
+        ensure_settings(&connection).expect("settings should initialize");
+        seed_if_empty(&connection).expect("sample data should seed");
+        connection
+            .execute(
+                "INSERT INTO focus_sessions (
+                    id, project_id, todo_id, type, planned_duration_sec, actual_duration_sec,
+                    started_at, ended_at, result, interrupt_reason
+                 ) VALUES (?1, NULL, NULL, 'short_break', 300, 300, ?2, ?3, 'completed', NULL)",
+                params![
+                    "break-session-1",
+                    "2026-04-05T11:00:00Z",
+                    "2026-04-05T11:05:00Z"
+                ],
+            )
+            .expect("break session should insert");
+        connection
+            .execute(
+                "UPDATE settings
+                 SET focus_minutes = 45, short_break_minutes = 10, long_break_minutes = 20,
+                     long_break_interval = 3, auto_start_breaks = 0, auto_start_focus = 1,
+                     notifications_enabled = 0, minimize_to_tray = 0, launch_on_startup = 1, sound_enabled = 0,
+                     ai_base_url = ?1, ai_api_key = ?2, ai_model_id = ?3
+                 WHERE id = 1",
+                params!["https://api.example.com/v1", "super-secret", "gpt-4.1-mini"],
+            )
+            .expect("settings should update");
+        connection
+            .execute(
+                "INSERT INTO ai_reviews (
+                    id, scope, project_id, project_name, timeframe, created_at,
+                    summary_json, issues_json, suggestions_json
+                 ) VALUES (?1, 'project', ?2, '资格考试冲刺', 'week', ?3, ?4, ?5, ?6)",
+                params![
+                    "review-1",
+                    "study-project",
+                    "2026-04-05T12:00:00Z",
+                    "[\"完成了 3 次专注\"]",
+                    "[\"中断偏多\"]",
+                    "[\"下周先做阅读真题\"]"
+                ],
+            )
+            .expect("ai review should insert");
+
+        clear_all_data_with_connection(&mut connection).expect("clear all data should succeed");
+
+        assert_eq!(count_rows(&connection, "projects"), 0);
+        assert_eq!(count_rows(&connection, "todos"), 0);
+        assert_eq!(count_rows(&connection, "focus_sessions"), 0);
+        assert_eq!(count_rows(&connection, "focus_feedback_logs"), 0);
+        assert_eq!(count_rows(&connection, "ai_reviews"), 0);
+
+        let internal_settings = load_settings_from_connection(&connection).expect("settings should remain available");
+        assert_eq!(internal_settings.focus_minutes, 25);
+        assert_eq!(internal_settings.short_break_minutes, 5);
+        assert_eq!(internal_settings.long_break_minutes, 15);
+        assert_eq!(internal_settings.long_break_interval, 4);
+        assert!(internal_settings.auto_start_breaks);
+        assert!(!internal_settings.auto_start_focus);
+        assert!(internal_settings.notifications_enabled);
+        assert!(internal_settings.minimize_to_tray);
+        assert!(!internal_settings.launch_on_startup);
+        assert!(internal_settings.sound_enabled);
+        assert_eq!(internal_settings.ai_base_url, "");
+        assert_eq!(internal_settings.ai_api_key, "");
+        assert_eq!(internal_settings.ai_model_id, "");
+
+        let snapshot = load_snapshot_from_connection(&connection).expect("snapshot should load after clear");
+        assert!(snapshot.projects.is_empty());
+        assert!(snapshot.todos.is_empty());
+        assert!(snapshot.sessions.is_empty());
+        let settings_json = serde_json::to_value(&snapshot.settings).expect("settings should serialize");
+        assert_eq!(settings_json.get("aiApiKey"), None);
+        assert_eq!(settings_json.get("aiApiKeyConfigured"), Some(&serde_json::Value::Bool(false)));
+    }
+
+    #[test]
+    fn clear_all_data_with_connection_is_idempotent() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database should open");
+        create_schema(&connection).expect("schema should initialize");
+        ensure_settings(&connection).expect("settings should initialize");
+        seed_if_empty(&connection).expect("sample data should seed");
+
+        clear_all_data_with_connection(&mut connection).expect("first clear should succeed");
+        clear_all_data_with_connection(&mut connection).expect("second clear should also succeed");
+
+        assert_eq!(count_rows(&connection, "projects"), 0);
+        assert_eq!(count_rows(&connection, "todos"), 0);
+        assert_eq!(count_rows(&connection, "focus_sessions"), 0);
+        assert_eq!(count_rows(&connection, "focus_feedback_logs"), 0);
+        assert_eq!(count_rows(&connection, "ai_reviews"), 0);
+        assert_eq!(count_rows(&connection, "settings"), 1);
     }
 
     #[test]

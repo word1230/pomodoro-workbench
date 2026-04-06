@@ -184,6 +184,13 @@ export async function saveSettings(settings: SaveAppSettingsInput): Promise<AppS
   return writeSnapshot(snapshot)
 }
 
+export async function clearAllData(): Promise<AppSnapshot> {
+  if (isTauriEnvironment()) {
+    return normalizeSnapshot(await invoke<AppSnapshot>('clear_all_data'))
+  }
+  return writeSnapshot(buildEmptySnapshot())
+}
+
 export async function generateTodoAiSuggestions(
   projectId: string,
   todoIds: string[],
@@ -432,17 +439,8 @@ function redactSettings(
   }
 }
 
-function buildSeedSnapshot(): AppSnapshot {
-  const now = new Date()
-  const projectStudyId = crypto.randomUUID()
-  const projectProductId = crypto.randomUUID()
-  const projectHealthId = crypto.randomUUID()
-  const todoReadingId = crypto.randomUUID()
-  const todoPrototypeId = crypto.randomUUID()
-  const todoReviewId = crypto.randomUUID()
-  const todoRunId = crypto.randomUUID()
-
-  const settings: AppSettings = {
+function defaultSettings(): AppSettings {
+  return {
     focusMinutes: 25,
     shortBreakMinutes: 5,
     longBreakMinutes: 15,
@@ -457,6 +455,28 @@ function buildSeedSnapshot(): AppSnapshot {
     aiApiKeyConfigured: false,
     aiModelId: '',
   }
+}
+
+function buildEmptySnapshot(): AppSnapshot {
+  return {
+    settings: defaultSettings(),
+    projects: [],
+    todos: [],
+    sessions: [],
+  }
+}
+
+function buildSeedSnapshot(): AppSnapshot {
+  const now = new Date()
+  const projectStudyId = crypto.randomUUID()
+  const projectProductId = crypto.randomUUID()
+  const projectHealthId = crypto.randomUUID()
+  const todoReadingId = crypto.randomUUID()
+  const todoPrototypeId = crypto.randomUUID()
+  const todoReviewId = crypto.randomUUID()
+  const todoRunId = crypto.randomUUID()
+
+  const settings = defaultSettings()
 
   const projects = [
     {

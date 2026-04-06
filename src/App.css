@@ -2619,6 +2619,23 @@
   line-height: 1.6;
 }
 
+.settings-section--danger {
+  border-top-color: rgba(239, 68, 68, 0.18);
+}
+
+.settings-section--danger .settings-section__head h4 {
+  color: #b42318;
+}
+
+.settings-danger__actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.settings-danger__actions .action-button {
+  min-width: 160px;
+}
+
 .settings-ai-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
