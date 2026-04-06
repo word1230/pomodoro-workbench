@@ -2062,24 +2062,26 @@ function App() {
                           </button>
                         </div>
 
-                        <div className="focus-kickoff__secondary-actions">
-                          <button
-                            type="button"
-                            className="action-button action-button--compact action-button--ghost"
-                            onClick={() => void handleAdvanceTodoStep()}
-                            disabled={
-                              !selectedTodoSteps.length ||
-                              selectedTodoCurrentStepIndex >= selectedTodoSteps.length - 1
-                            }
-                          >
-                            完成当前步
-                          </button>
-                        </div>
-
                         <div className="focus-kickoff__footer-quick-actions">
-                          <div className="focus-kickoff__footer-group">
-                            <span className="focus-kickoff__footer-label">步骤调整</span>
-                            <div className="focus-kickoff__footer-buttons">
+                          <details className="focus-kickoff__footer-group focus-kickoff__footer-group--step-adjustments" open>
+                            <summary className="focus-kickoff__footer-summary">
+                              <span className="focus-kickoff__footer-label">步骤调整</span>
+                              <span className="focus-kickoff__footer-summary-icon" aria-hidden="true">
+                                ▾
+                              </span>
+                            </summary>
+                            <div className="focus-kickoff__footer-buttons focus-kickoff__footer-buttons--stack">
+                              <button
+                                type="button"
+                                className="action-button action-button--compact action-button--ghost"
+                                onClick={() => void handleAdvanceTodoStep()}
+                                disabled={
+                                  !selectedTodoSteps.length ||
+                                  selectedTodoCurrentStepIndex >= selectedTodoSteps.length - 1
+                                }
+                              >
+                                完成当前步
+                              </button>
                               <button
                                 type="button"
                                 className="action-button action-button--compact action-button--ghost"
@@ -2097,8 +2099,7 @@ function App() {
                                 编辑步骤
                               </button>
                             </div>
-                          </div>
-
+                          </details>
                           <div className="focus-kickoff__footer-group focus-kickoff__footer-group--plan">
                             <span className="focus-kickoff__footer-label">本轮计划</span>
                             <label className="focus-kickoff__footer-plan-field">

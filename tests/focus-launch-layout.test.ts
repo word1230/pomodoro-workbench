@@ -56,6 +56,55 @@ test('focus launch uses a dedicated helper tools component', async () => {
   assert.doesNotMatch(appTsx, /className="launch-more-tabs"/)
 })
 
+test('focus launch nests step completion inside a default-open step-adjustment section', async () => {
+  const appTsx = await readFile(appTsxPath, 'utf8')
+
+  const contextIndex = appTsx.indexOf('后续怎么推进')
+  const stepAdjustmentsIndex = appTsx.indexOf('步骤调整')
+  const planIndex = appTsx.indexOf('本轮计划')
+  const completeIndex = appTsx.indexOf('完成当前步')
+  const rewindIndex = appTsx.indexOf('回退一步')
+
+  assert.ok(contextIndex !== -1, 'expected the launch context block to exist')
+  assert.ok(stepAdjustmentsIndex !== -1, 'expected the step-adjustment section label to exist')
+  assert.ok(planIndex !== -1, 'expected the plan section label to exist')
+  assert.ok(completeIndex !== -1, 'expected the complete-step action to exist')
+  assert.ok(rewindIndex !== -1, 'expected the rewind action to exist')
+
+  assert.ok(contextIndex < stepAdjustmentsIndex, 'expected 后续怎么推进 above 步骤调整')
+  assert.ok(stepAdjustmentsIndex < planIndex, 'expected 步骤调整 above 本轮计划')
+  assert.ok(completeIndex < rewindIndex, 'expected 完成当前步 before 回退一步')
+
+  assert.match(
+    appTsx,
+    /<details[^>]*className="focus-kickoff__footer-group focus-kickoff__footer-group--step-adjustments"[^>]*open/,
+    'expected 步骤调整 to use a default-open details section',
+  )
+  assert.match(appTsx, /<summary className="focus-kickoff__footer-summary">/)
+  assert.doesNotMatch(
+    appTsx,
+    /<div className="focus-kickoff__secondary-actions">[\s\S]*完成当前步[\s\S]*<\/div>/,
+    'expected 完成当前步 to leave the standalone secondary-actions row',
+  )
+
+  const stepAdjustmentsBlock = extractBlock(
+    appTsx,
+    /<details className="focus-kickoff__footer-group focus-kickoff__footer-group--step-adjustments" open>[\s\S]*?<\/details>/,
+    'expected the step-adjustment details block to exist',
+  )
+
+  assert.match(
+    stepAdjustmentsBlock,
+    /onClick=\{\(\) => void handleAdvanceTodoStep\(\)\}/,
+    'expected 完成当前步 to keep the advance-step handler',
+  )
+  assert.match(
+    stepAdjustmentsBlock,
+    /disabled=\{\s*!selectedTodoSteps\.length\s*\|\|\s*selectedTodoCurrentStepIndex >= selectedTodoSteps\.length - 1\s*\}/,
+    'expected 完成当前步 to keep its disabled guard',
+  )
+})
+
 test('helper tools component keeps review conditional and emphasized', async () => {
   const helperTools = await readFile(helperToolsPath, 'utf8')
 
@@ -78,14 +127,21 @@ test('helper tools component keeps review conditional and emphasized', async () 
   )
 })
 
-test('App.css defines inset helper tools hover-label styling', async () => {
+test('App.css defines stacked footer layout for the step-adjustment section', async () => {
   const css = await readFile(appCssPath, 'utf8')
 
   const footerQuickActionsRule = extractRuleBlock(css, '.focus-kickoff__footer-quick-actions')
-  assert.match(footerQuickActionsRule, /grid-template-columns:\s*minmax\(0, 1fr\) auto;/)
+  assert.match(footerQuickActionsRule, /grid-template-columns:\s*minmax\(0, 1fr\);/)
 
   const footerToolsRule = extractRuleBlock(css, '.focus-kickoff__footer-tools')
-  assert.match(footerToolsRule, /justify-self:\s*end;/)
+  assert.match(footerToolsRule, /justify-self:\s*start;/)
+
+  const footerSummaryRule = extractRuleBlock(css, '.focus-kickoff__footer-summary')
+  assert.match(footerSummaryRule, /cursor:\s*pointer;/)
+
+  const footerButtonsStackRule = extractRuleBlock(css, '.focus-kickoff__footer-buttons--stack')
+  assert.match(footerButtonsStackRule, /display:\s*grid;/)
+  assert.match(footerButtonsStackRule, /grid-template-columns:\s*minmax\(0, 1fr\);/)
 
   const helperToolLabelRule = extractRuleBlock(css, '.focus-kickoff__helper-tool-label')
   assert.match(helperToolLabelRule, /opacity:\s*0;/)
@@ -96,6 +152,13 @@ test('App.css defines inset helper tools hover-label styling', async () => {
     'expected a hover or focus-visible rule that reveals helper tool labels',
   )
   assert.match(hoverRevealRule, /opacity:\s*1;/)
+
+  const summaryIconOpenRule = extractBlock(
+    css,
+    /\.focus-kickoff__footer-group--step-adjustments\[open\]\s+\.focus-kickoff__footer-summary-icon\s*\{[^}]*\}/,
+    'expected an open-state rule for the step-adjustment chevron',
+  )
+  assert.match(summaryIconOpenRule, /transform:\s*rotate\(180deg\);/)
 
   assert.doesNotMatch(css, /\.launch-more-tabs\s*\{/)
 })

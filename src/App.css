@@ -3569,8 +3569,8 @@
 .focus-kickoff__footer-quick-actions {
   display: grid;
   align-content: start;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 16px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
   min-height: clamp(88px, 15vh, 140px);
   margin-top: auto;
   padding: 16px 0 0;
@@ -3580,8 +3580,8 @@
 .focus-kickoff__footer-tools {
   display: inline-flex;
   align-items: center;
-  justify-self: end;
-  align-self: end;
+  justify-self: start;
+  align-self: start;
   gap: 8px;
   padding: 6px;
   border: 1px solid rgba(15, 23, 42, 0.08);
@@ -3669,6 +3669,13 @@
   min-width: 0;
 }
 
+.focus-kickoff__footer-group--step-adjustments {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
 .focus-kickoff__footer-group--plan {
   justify-items: start;
 }
@@ -3681,10 +3688,41 @@
   text-transform: uppercase;
 }
 
+.focus-kickoff__footer-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.focus-kickoff__footer-summary::-webkit-details-marker {
+  display: none;
+}
+
+.focus-kickoff__footer-summary-icon {
+  color: var(--muted);
+  transition: transform 180ms ease;
+}
+
+.focus-kickoff__footer-group--step-adjustments[open] .focus-kickoff__footer-summary-icon {
+  transform: rotate(180deg);
+}
+
 .focus-kickoff__footer-buttons {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.focus-kickoff__footer-buttons--stack {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.focus-kickoff__footer-buttons--stack > .action-button {
+  justify-content: flex-start;
 }
 
 .focus-kickoff__footer-plan-field {
