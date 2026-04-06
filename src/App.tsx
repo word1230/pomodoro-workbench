@@ -2007,7 +2007,7 @@ function App() {
                     ) : null}
                     <button
                       type="button"
-                      className="action-button action-button--compact"
+                      className="action-button action-button--compact top-control"
                       onClick={() => setProjectPickerMode('focus')}
                       disabled={focusInteractionLocked}
                     >
@@ -2400,15 +2400,9 @@ function App() {
                 className="panel--support-shell"
                 bodyClassName="support-panel-body"
                 actions={
-                  <button type="button" className="action-button action-button--compact" onClick={() => setSettingsOpen(true)}>
-                    设置
-                  </button>
-                }
-              >
-                <div className="support-panel support-panel--plan">
-                  <div className="support-plan-card">
-                    <span className="support-plan-card__label">本轮计划</span>
-                    <label className="focus-kickoff__footer-plan-field">
+                  <div className="support-panel-actions">
+                    <label className="support-plan-pill top-control">
+                      <span className="support-plan-pill__label">本轮计划</span>
                       <input
                         type="number"
                         min={1}
@@ -2422,9 +2416,16 @@ function App() {
                       />
                       <small>个番茄</small>
                     </label>
+                    <button
+                      type="button"
+                      className="action-button action-button--compact top-control"
+                      onClick={() => setSettingsOpen(true)}
+                    >
+                      设置
+                    </button>
                   </div>
-                </div>
-
+                }
+              >
                 <div className="support-panel support-panel--timer">
                   <div className="support-timer">
                     <div className="support-timer__head">

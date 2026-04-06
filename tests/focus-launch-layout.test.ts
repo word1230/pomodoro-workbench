@@ -216,7 +216,7 @@ test('focus launch renders helper tools in the launch panel header actions', asy
   )
 })
 
-test('focus launch renders planned pomodoros above the timer support panel', async () => {
+test('focus launch renders planned pomodoros in the timer panel header actions', async () => {
   const appTsx = await readFile(appTsxPath, 'utf8')
 
   const launchPanelBlock = extractBlock(
@@ -229,27 +229,35 @@ test('focus launch renders planned pomodoros above the timer support panel', asy
     /<Panel\s+title="计时栏"[\s\S]*?<\/Panel>/,
     'expected the support panel block to exist',
   )
+  const actionsBlock = extractBlock(
+    supportPanelBlock,
+    /actions=\{[\s\S]*?<div className="support-panel-actions">[\s\S]*?<\/div>\s*\}/,
+    'expected the support panel to define header actions',
+  )
 
-  assert.match(supportPanelBlock, /className="support-panel support-panel--plan"/)
-  assert.match(supportPanelBlock, /className="support-plan-card"/)
-  assert.match(supportPanelBlock, /<span className="support-plan-card__label">本轮计划<\/span>/)
-  assert.match(supportPanelBlock, /value=\{plannedPomodoros\}/)
-  assert.match(supportPanelBlock, /onBlur=\{\(\) => void handlePlannedPomodorosSave\(\)\}/)
+  assert.match(actionsBlock, /className="support-panel-actions"/)
+  assert.match(actionsBlock, /className="support-plan-pill(?:[^"]*)"/)
+  assert.match(actionsBlock, /<span className="support-plan-pill__label">本轮计划<\/span>/)
+  assert.match(actionsBlock, /value=\{plannedPomodoros\}/)
+  assert.match(actionsBlock, /onBlur=\{\(\) => void handlePlannedPomodorosSave\(\)\}/)
+  assert.match(actionsBlock, /<small>个番茄<\/small>/)
 
-  const planBlockIndex = supportPanelBlock.indexOf('support-panel support-panel--plan')
+  const planPillIndex = actionsBlock.indexOf('className="support-plan-pill')
+  const settingsButtonIndex = actionsBlock.indexOf('设置')
+  const actionsBlockIndex = supportPanelBlock.indexOf(actionsBlock)
   const timerBlockIndex = supportPanelBlock.indexOf('support-panel--timer')
 
-  assert.notStrictEqual(planBlockIndex, -1, 'expected a planned pomodoros support panel')
+  assert.notStrictEqual(planPillIndex, -1, 'expected a planned pomodoros pill in the support panel actions')
+  assert.notStrictEqual(settingsButtonIndex, -1, 'expected the settings button in the support panel actions')
+  assert.notStrictEqual(actionsBlockIndex, -1, 'expected the support panel actions to be inside the support panel block')
   assert.notStrictEqual(timerBlockIndex, -1, 'expected a timer support panel')
-  assert.ok(planBlockIndex < timerBlockIndex, 'expected the planned pomodoros panel above the timer panel')
-  assert.doesNotMatch(
-    launchPanelBlock,
-    /focus-kickoff__footer-group focus-kickoff__footer-group--plan[\s\S]*value=\{plannedPomodoros\}/,
-    'expected the planned pomodoros control to leave the launch footer',
-  )
+  assert.ok(planPillIndex < settingsButtonIndex, 'expected the planned pomodoros pill before the settings button')
+  assert.ok(actionsBlockIndex < timerBlockIndex, 'expected planned pomodoros controls above the timer body')
+  assert.doesNotMatch(supportPanelBlock, /className="support-panel support-panel--plan"/)
+  assert.doesNotMatch(launchPanelBlock, /focus-kickoff__footer-group focus-kickoff__footer-group--plan[\s\S]*value=\{plannedPomodoros\}/)
 })
 
-test('App.css defines header helper tool layout and support-side plan card styles', async () => {
+test('App.css defines unified top control sizing and timer-header plan pill styles', async () => {
   const css = await readFile(appCssPath, 'utf8')
 
   const launchPanelActionsRule = extractRuleBlock(css, '.launch-panel-actions')
@@ -257,15 +265,22 @@ test('App.css defines header helper tool layout and support-side plan card style
   assert.match(launchPanelActionsRule, /align-items:\s*center;/)
   assert.match(launchPanelActionsRule, /flex-wrap:\s*wrap;/)
 
-  const supportPlanPanelRule = extractRuleBlock(css, '.panel--support-shell .support-panel--plan')
-  assert.match(supportPlanPanelRule, /padding-top:\s*0;/)
-  assert.match(supportPlanPanelRule, /border-top:\s*0;/)
+  const supportPanelActionsRule = extractRuleBlock(css, '.support-panel-actions')
+  assert.match(supportPanelActionsRule, /display:\s*inline-flex;/)
+  assert.match(supportPanelActionsRule, /align-items:\s*center;/)
+  assert.match(supportPanelActionsRule, /gap:\s*10px;/)
 
-  const supportPlanCardRule = extractRuleBlock(css, '.support-plan-card')
-  assert.match(supportPlanCardRule, /display:\s*grid;/)
-  assert.match(supportPlanCardRule, /justify-items:\s*center;/)
+  const topControlRule = extractRuleBlock(css, '.top-control')
+  assert.match(topControlRule, /min-height:\s*36px;/)
+  assert.match(topControlRule, /border-radius:\s*999px;/)
 
-  const supportPlanFieldRule = extractRuleBlock(css, '.support-plan-card .focus-kickoff__footer-plan-field')
-  assert.match(supportPlanFieldRule, /min-height:\s*56px;/)
+  const supportPlanPillRule = extractRuleBlock(css, '.support-plan-pill')
+  assert.match(supportPlanPillRule, /display:\s*inline-flex;/)
+  assert.match(supportPlanPillRule, /align-items:\s*center;/)
+  assert.match(supportPlanPillRule, /padding:\s*0 12px;/)
+
+  const supportPlanInputRule = extractRuleBlock(css, '.support-plan-pill input')
+  assert.match(supportPlanInputRule, /width:\s*40px;/)
+  assert.match(supportPlanInputRule, /font:\s*600 24px\/1 var\(--heading\);/)
 })
 
