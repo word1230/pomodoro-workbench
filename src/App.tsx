@@ -285,7 +285,6 @@ function App() {
   const [activationAiGenerating, setActivationAiGenerating] = useState(false)
   const [, setActivationAssistOpen] = useState(false)
   const [, setLaunchManageOpen] = useState(false)
-  const [launchDetailsOpen, setLaunchDetailsOpen] = useState(false)
   const [launchMoreOpen, setLaunchMoreOpen] = useState(false)
   const [launchMoreTab, setLaunchMoreTab] = useState<LaunchMoreTab>('steps')
   const launchMoreTabIds = useMemo<LaunchMoreTab[]>(() => launchMoreTabOptions.map((tab) => tab.id), [])
@@ -537,9 +536,6 @@ function App() {
     focusFeedbackDraft?.issueText,
     focusFeedbackDraft?.riskText,
   ].filter((value) => Boolean(value?.trim())).length
-  const shouldAutoOpenLaunchDetails = selectedTodo
-    ? !selectedTodo.quickStartStep.trim() || !selectedTodo.description.trim()
-    : false
   const selectedActivationBlockReason =
     activationBlockReasonOptions.find((option) => option.id === activationBlockReason) ??
     activationBlockReasonOptions[0]
@@ -654,10 +650,9 @@ function App() {
     setActivationBlockReason('unclear_start')
     setActivationAssistOpen(false)
     setLaunchManageOpen(false)
-    setLaunchDetailsOpen(shouldAutoOpenLaunchDetails)
     setLaunchMoreOpen(false)
     setLaunchMoreTab('steps')
-  }, [selectedTodo?.id, shouldAutoOpenLaunchDetails])
+  }, [selectedTodo?.id])
 
   useEffect(() => {
     if (!selectedTodo) {
@@ -2017,31 +2012,15 @@ function App() {
                       <section className="focus-kickoff__section focus-kickoff__section--brief focus-kickoff__section--primary">
                         <div className="focus-kickoff__section-copy">
                           <span className="eyebrow">当前任务</span>
-                          <h4>开始这一轮专注</h4>
                         </div>
                         <div className="focus-kickoff__hero-head">
                           <h3>{selectedTodo.title}</h3>
-                          <div className="focus-kickoff__pills">
+                          <div className="focus-kickoff__pills focus-kickoff__pills--meta">
                             {selectedTodo.isToday ? <span className="info-pill">今日清单</span> : null}
                             <span className="info-pill">{selectedTodo.dueDate ?? '未排期'}</span>
+                            <span className="info-pill">本轮 {plannedPomodoros} 个番茄</span>
+                            <span className="info-pill">剩余 {remainingPomodoros} 个</span>
                           </div>
-                        </div>
-
-                        <div className="focus-kickoff__metrics" aria-label="番茄指标">
-                          <article className="focus-kickoff__metric focus-kickoff__metric--planned">
-                            <span className="focus-kickoff__metric-label">本轮番茄</span>
-                            <div className="focus-kickoff__metric-value">
-                              <strong>{plannedPomodoros}</strong>
-                              <span>个</span>
-                            </div>
-                          </article>
-                          <article className="focus-kickoff__metric focus-kickoff__metric--remaining">
-                            <span className="focus-kickoff__metric-label">剩余番茄</span>
-                            <div className="focus-kickoff__metric-value">
-                              <strong>{remainingPomodoros}</strong>
-                              <span>个</span>
-                            </div>
-                          </article>
                         </div>
 
                         <article className="focus-kickoff__card focus-kickoff__card--primary">
@@ -2051,38 +2030,23 @@ function App() {
                               {selectedTodoQuickStartStep || '还没有最简启动步骤'}
                             </strong>
                           </div>
-                          <div className="focus-kickoff__card-topline">
-                            <span>下一步</span>
-                            {selectedTodoSteps.length ? (
-                              <small>
-                                第 {Math.min(selectedTodoCurrentStepIndex + 1, selectedTodoSteps.length)} / {selectedTodoSteps.length} 步
-                              </small>
-                            ) : (
-                              <small>先开始</small>
-                            )}
+                          <div className="focus-kickoff__context-panel" aria-label="任务推进路径">
+                            <div className="focus-kickoff__context-heading">
+                              <span className="focus-kickoff__context-label">后续怎么推进</span>
+                              {selectedTodoSteps.length ? (
+                                <small className="focus-kickoff__context-progress">
+                                  第 {Math.min(selectedTodoCurrentStepIndex + 1, selectedTodoSteps.length)} / {selectedTodoSteps.length} 步
+                                </small>
+                              ) : null}
+                            </div>
+                            <div className="focus-kickoff__context-body">{renderLaunchContextBody()}</div>
                           </div>
-                          <strong>{selectedTodoCurrentStep}</strong>
-                          <p>
-                            {selectedTodoSteps.length > 1
-                              ? selectedTodoCurrentStepIndex >= selectedTodoSteps.length - 1
-                                ? '做完这一步就可以收尾。'
-                                : '先只做这一件事。'
-                              : '先从这个最小动作开始。'}
-                          </p>
                         </article>
 
                         <div className="focus-kickoff__primary-actions">
                           <button
                             type="button"
                             className="action-button action-button--primary"
-                            onClick={() => void startActivationRun()}
-                            disabled={!selectedTodo || focusInteractionLocked}
-                          >
-                            先启动 5 分钟
-                          </button>
-                          <button
-                            type="button"
-                            className="action-button"
                             onClick={() => void startFocusRun()}
                             disabled={!selectedTodo || focusInteractionLocked}
                           >
@@ -2090,7 +2054,18 @@ function App() {
                           </button>
                           <button
                             type="button"
-                            className="action-button action-button--compact"
+                            className="action-button"
+                            onClick={() => void startActivationRun()}
+                            disabled={!selectedTodo || focusInteractionLocked}
+                          >
+                            先启动 5 分钟
+                          </button>
+                        </div>
+
+                        <div className="focus-kickoff__secondary-actions">
+                          <button
+                            type="button"
+                            className="action-button action-button--compact action-button--ghost"
                             onClick={() => void handleAdvanceTodoStep()}
                             disabled={
                               !selectedTodoSteps.length ||
@@ -2099,48 +2074,64 @@ function App() {
                           >
                             完成当前步
                           </button>
-                        </div>
-
-                        <div
-                          className={
-                            launchDetailsOpen
-                              ? 'focus-kickoff__details is-open'
-                              : 'focus-kickoff__details'
-                          }
-                        >
-                          <button
-                            type="button"
-                            className="focus-kickoff__details-toggle"
-                            onClick={() => setLaunchDetailsOpen((current) => !current)}
-                            aria-expanded={launchDetailsOpen}
-                          >
-                            <span>{launchDetailsOpen ? '收起任务上下文' : '查看任务上下文'}</span>
-                            <strong>{launchDetailsOpen ? '收起' : '展开查看'}</strong>
-                          </button>
-                          {launchDetailsOpen ? (
-                            <div className="focus-kickoff__details-body">
-                              <div className="focus-kickoff__context-panel" aria-label="任务上下文">
-                                <div className="focus-kickoff__context-heading">
-                                  <span className="focus-kickoff__context-label">后续怎么推进</span>
-                                </div>
-                                <div className="focus-kickoff__context-body">{renderLaunchContextBody()}</div>
-                              </div>
-                            </div>
-                          ) : null}
-                        </div>
-
-                        <div className="focus-kickoff__more-bar">
-                          <div className="focus-kickoff__more-copy">
-                            <span className="info-pill">更多设置 / 求助 / 复盘</span>
-                          </div>
                           <button
                             type="button"
                             className="action-button action-button--compact action-button--ghost"
-                            onClick={() => openLaunchMorePanel('steps')}
-                            aria-expanded={launchMoreOpen}
+                            onClick={() => openLaunchMorePanel('assist')}
+                            aria-expanded={launchMoreOpen && launchMoreTab === 'assist'}
+                          >
+                            AI 求助
+                          </button>
+                          <button
+                            type="button"
+                            className="action-button action-button--compact action-button--ghost"
+                            onClick={() => openLaunchMorePanel('review')}
+                            aria-expanded={launchMoreOpen && launchMoreTab === 'review'}
                           >
                             更多选项
                           </button>
+                        </div>
+
+                        <div className="focus-kickoff__footer-quick-actions">
+                          <div className="focus-kickoff__footer-group">
+                            <span className="focus-kickoff__footer-label">步骤调整</span>
+                            <div className="focus-kickoff__footer-buttons">
+                              <button
+                                type="button"
+                                className="action-button action-button--compact action-button--ghost"
+                                onClick={() => void handleRewindTodoStep()}
+                                disabled={!selectedTodoSteps.length || selectedTodoCurrentStepIndex === 0}
+                              >
+                                回退一步
+                              </button>
+                              <button
+                                type="button"
+                                className="action-button action-button--compact"
+                                onClick={() => openTodoEditor(selectedTodo)}
+                                disabled={!selectedTodo}
+                              >
+                                编辑步骤
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="focus-kickoff__footer-group focus-kickoff__footer-group--plan">
+                            <span className="focus-kickoff__footer-label">本轮计划</span>
+                            <label className="focus-kickoff__footer-plan-field">
+                              <input
+                                type="number"
+                                min={1}
+                                max={20}
+                                value={plannedPomodoros}
+                                disabled={focusInteractionLocked}
+                                onChange={(event) =>
+                                  setPlannedPomodoros(Math.max(1, Math.min(20, Number(event.target.value) || 1)))
+                                }
+                                onBlur={() => void handlePlannedPomodorosSave()}
+                              />
+                              <small>个番茄</small>
+                            </label>
+                          </div>
                         </div>
 
                       </section>
@@ -2205,49 +2196,13 @@ function App() {
                               <div className="focus-kickoff__section-body focus-kickoff__section-body--stacked">
                                 <article className="focus-kickoff__utility-row focus-kickoff__utility-row--nested">
                                   <div className="focus-kickoff__utility-copy">
-                                    <h4>编辑</h4>
+                                    <h4>说明</h4>
                                   </div>
-                                  <div className="focus-kickoff__utility-actions focus-kickoff__utility-actions--step-management">
-                                    <button
-                                      type="button"
-                                      className="action-button action-button--compact action-button--ghost"
-                                      onClick={() => void handleRewindTodoStep()}
-                                      disabled={!selectedTodoSteps.length || selectedTodoCurrentStepIndex === 0}
-                                    >
-                                      回退一步
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="action-button action-button--compact"
-                                      onClick={() => {
-                                        handleCloseLaunchMorePanel()
-                                        openTodoEditor(selectedTodo)
-                                      }}
-                                      disabled={!selectedTodo}
-                                    >
-                                      编辑步骤
-                                    </button>
+                                  <div className="focus-kickoff__utility-detail">
+                                    <p className="focus-kickoff__description-empty">
+                                      步骤推进和本轮番茄数已移动到主面板底部，方便直接调整。
+                                    </p>
                                   </div>
-                                </article>
-
-                                <article className="focus-kickoff__utility-row focus-kickoff__utility-row--nested">
-                                  <div className="focus-kickoff__utility-copy">
-                                    <h4>番茄数</h4>
-                                  </div>
-                                  <label className="focus-kickoff__plan-field">
-                                    <input
-                                      type="number"
-                                      min={1}
-                                      max={20}
-                                      value={plannedPomodoros}
-                                      disabled={focusInteractionLocked}
-                                      onChange={(event) =>
-                                        setPlannedPomodoros(Math.max(1, Math.min(20, Number(event.target.value) || 1)))
-                                      }
-                                      onBlur={() => void handlePlannedPomodorosSave()}
-                                    />
-                                    <small>个番茄</small>
-                                  </label>
                                 </article>
                               </div>
                             </section>
