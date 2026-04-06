@@ -34,6 +34,16 @@
   --radius-lg: 8px;
   --radius-md: 6px;
   --radius-sm: 4px;
+  --font-label-xs: 600 12px/1.4 var(--sans);
+  --font-body-sm: 500 13px/1.6 var(--sans);
+  --font-body-md: 500 14px/1.65 var(--sans);
+  --font-title-sm: 600 16px/1.25 var(--heading);
+  --font-title-md: 600 20px/1.15 var(--heading);
+  --font-display-timer: 600 clamp(36px, 3vw, 40px) / 1 var(--heading);
+  --tracking-tight: -0.03em;
+  --tracking-title: -0.04em;
+  --tracking-mono: 0.16em;
+  --numeric-tabular: tabular-nums;
   --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --heading: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
