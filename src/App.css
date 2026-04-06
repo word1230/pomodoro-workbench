@@ -29,6 +29,7 @@
 .manage-todo-list,
 .project-metric-table,
 .launch-panel-body,
+.focus-kickoff__context-body,
 .focus-queue__list,
 .timer-records__list,
 .panel--stats-analysis .stats-panel-body,
@@ -43,6 +44,7 @@
 .manage-todo-list::-webkit-scrollbar,
 .project-metric-table::-webkit-scrollbar,
 .launch-panel-body::-webkit-scrollbar,
+.focus-kickoff__context-body::-webkit-scrollbar,
 .focus-queue__list::-webkit-scrollbar,
 .timer-records__list::-webkit-scrollbar,
 .panel--stats-analysis .stats-panel-body::-webkit-scrollbar,
@@ -4926,4 +4928,66 @@
   .modal-card--launch-drawer .focus-kickoff__section-copy p {
     max-width: none;
   }
+}
+
+/* Focus page: pin the launch board and keep scrolling inside its context area */
+.page-grid--focus > .panel.panel--launch,
+.page-grid--focus > .panel.panel--launch .panel__body {
+  min-height: 0;
+}
+
+.page-grid--focus > .panel.panel--launch .launch-panel-body,
+.panel--launch .launch-panel-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
+.focus-kickoff--board {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+
+.focus-kickoff--board > .focus-kickoff__hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+
+.focus-kickoff--board .focus-kickoff__section--primary {
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  overflow: hidden;
+}
+
+.focus-kickoff--board .focus-kickoff__card--primary {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: stretch;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.focus-kickoff__context-panel {
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.focus-kickoff__context-body {
+  min-height: 0;
+  overflow: auto;
+  align-content: start;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.focus-kickoff__footer-quick-actions {
+  margin-top: 0;
 }
