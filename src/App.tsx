@@ -279,7 +279,6 @@ function App() {
   const [activationAiGenerating, setActivationAiGenerating] = useState(false)
   const [focusHelperDialog, setFocusHelperDialog] = useState<FocusHelperDialog | null>(null)
   const statsPrimaryViewIds = useMemo<StatsPrimaryView[]>(() => ['share', 'review'], [])
-  const [todoContextOpen, setTodoContextOpen] = useState(false)
   const focusFeedbackCardRef = useRef<HTMLDivElement | null>(null)
   const activationReliefRequestIdRef = useRef(0)
   const latestSelectedTodoIdRef = useRef<string | null>(null)
@@ -1286,7 +1285,6 @@ function App() {
     setTodoEditorMode(todo ? 'edit' : 'create')
     if (todo) {
       const resolvedSteps = getResolvedTodoSteps(todo)
-      setTodoContextOpen(Boolean(todo.description.trim()))
       setTodoForm(
         normalizeTodoDraft({
           id: todo.id,
@@ -1305,7 +1303,6 @@ function App() {
         }),
       )
     } else {
-      setTodoContextOpen(false)
       setTodoForm(
         normalizeTodoDraft({
           projectId: manageProject?.id ?? projects[0]?.id ?? '',
@@ -1380,7 +1377,6 @@ function App() {
 
   const closeTodoEditor = () => {
     setTodoEditorOpen(false)
-    setTodoContextOpen(false)
   }
 
   const handleDeleteTodo = async (todoId: string) => {
@@ -3571,12 +3567,6 @@ function App() {
         >
           <form className="modal-form todo-editor-form" onSubmit={handleTodoFormSubmit}>
             <section className="settings-section todo-editor-form__section todo-editor-form__section--core">
-              <div className="settings-section__head">
-                <div>
-                  <h4>基础信息</h4>
-                </div>
-              </div>
-
               <label className="field">
                 <span>标题</span>
                 <input
@@ -3597,12 +3587,6 @@ function App() {
             </section>
 
             <section className="settings-section todo-editor-form__section">
-              <div className="settings-section__head">
-                <div>
-                  <h4>步骤</h4>
-                </div>
-              </div>
-
               <label className="field">
                 <span>步骤</span>
                 <textarea
@@ -3623,7 +3607,7 @@ function App() {
 
 
               <div className="modal-form__row modal-form__row--todo todo-editor-form__row">
-                <label className="field field--compact">
+                <label className="field field--compact todo-editor-form__current-step">
                   <span>当前</span>
                   <select
                     value={todoForm.currentStepIndex}
@@ -3744,43 +3728,6 @@ function App() {
                   />
                 </label>
               </div>
-            </section>
-
-            <section
-              className={
-                todoContextOpen
-                  ? 'focus-kickoff__details todo-editor-form__details is-open'
-                  : 'focus-kickoff__details todo-editor-form__details'
-              }
-            >
-              <button
-                type="button"
-                className="focus-kickoff__details-toggle"
-                onClick={() => setTodoContextOpen((current) => !current)}
-                aria-expanded={todoContextOpen}
-              >
-                <span>任务上下文（可选）</span>
-                <strong>{todoContextOpen ? '收起' : '展开查看'}</strong>
-              </button>
-              {todoContextOpen ? (
-                <div className="focus-kickoff__details-body">
-                  <label className="field field--todo-context">
-                    <span>任务上下文（可选）</span>
-                    <textarea
-                      rows={3}
-                      value={todoForm.description}
-                      onChange={(event) => {
-                        const nextDescription = event.target.value
-                        setTodoForm({
-                          ...todoForm,
-                          description: nextDescription,
-                        })
-                      }}
-                      placeholder="记录背景、限制、参考信息和给 AI 的上下文；不会自动改写步骤列表"
-                    ></textarea>
-                  </label>
-                </div>
-              ) : null}
             </section>
 
             <div className="modal-form__actions">
