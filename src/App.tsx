@@ -1,6 +1,5 @@
 import {
   type FormEvent,
-  type KeyboardEvent,
   type ReactNode,
   startTransition,
   useDeferredValue,
@@ -111,61 +110,6 @@ import type {
 } from './types'
 
 type FocusHelperDialog = 'assist' | 'review'
-type StatsPrimaryView = 'share' | 'review'
-
-const STATS_ANALYSIS_TAB_GROUP_ID = 'stats-analysis'
-
-const buildTabId = (groupId: string, tabId: string) => `${groupId}-tab-${tabId}`
-const buildTabPanelId = (groupId: string, tabId: string) => `${groupId}-panel-${tabId}`
-
-const handleTabListKeyDown = <TabId extends string>(
-  event: KeyboardEvent<HTMLElement>,
-  options: readonly TabId[],
-  activeTab: TabId,
-  setActiveTab: (tab: TabId) => void,
-  groupId: string,
-) => {
-  if (!options.length) {
-    return
-  }
-
-  const currentIndex = options.indexOf(activeTab)
-  if (currentIndex === -1) {
-    return
-  }
-
-  let nextIndex: number | null = null
-
-  switch (event.key) {
-    case 'ArrowRight':
-      nextIndex = (currentIndex + 1) % options.length
-      break
-    case 'ArrowLeft':
-      nextIndex = (currentIndex - 1 + options.length) % options.length
-      break
-    case 'Home':
-      nextIndex = 0
-      break
-    case 'End':
-      nextIndex = options.length - 1
-      break
-    default:
-      return
-  }
-
-  if (nextIndex === null) {
-    return
-  }
-
-  event.preventDefault()
-  const nextTab = options[nextIndex]
-  setActiveTab(nextTab)
-
-  if (typeof document !== 'undefined') {
-    const nextElement = document.getElementById(buildTabId(groupId, nextTab))
-    nextElement?.focus()
-  }
-}
 
 const pageMeta: Array<{ id: PageId; label: string }> = [
   { id: 'focus', label: '专注' },
@@ -228,7 +172,6 @@ function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [manageProjectId, setManageProjectId] = useState<string | null>(null)
   const [statsProjectId, setStatsProjectId] = useState<string | null>(null)
-  const [statsPrimaryView, setStatsPrimaryView] = useState<StatsPrimaryView>('share')
   const [selectedTodoId, setSelectedTodoId] = useState<string | null>(null)
   const [plannedPomodoros, setPlannedPomodoros] = useState(1)
   const [timer, setTimer] = useState<TimerState>(idleTimer)
@@ -278,7 +221,6 @@ function App() {
   const [activationReliefHelpful, setActivationReliefHelpful] = useState(false)
   const [activationAiGenerating, setActivationAiGenerating] = useState(false)
   const [focusHelperDialog, setFocusHelperDialog] = useState<FocusHelperDialog | null>(null)
-  const statsPrimaryViewIds = useMemo<StatsPrimaryView[]>(() => ['share', 'review'], [])
   const focusFeedbackCardRef = useRef<HTMLDivElement | null>(null)
   const activationReliefRequestIdRef = useRef(0)
   const latestSelectedTodoIdRef = useRef<string | null>(null)
@@ -2790,169 +2732,66 @@ function App() {
                   </Panel>
 
                   <Panel
-                    title=""
+                    title="项目占比"
                     className="panel--stats-analysis"
                     bodyClassName="stats-panel-body"
                   >
-                    <div className="stats-analysis__toolbar">
-                      <div
-                        className="stats-analysis-tabs"
-                        role="tablist"
-                        aria-label="项目分析视图"
-                        onKeyDown={(event) =>
-                          handleTabListKeyDown(
-                            event,
-                            statsPrimaryViewIds,
-                            statsPrimaryView,
-                            setStatsPrimaryView,
-                            STATS_ANALYSIS_TAB_GROUP_ID,
-                          )
-                        }
-                      >
-                        <button
-                          id={buildTabId(STATS_ANALYSIS_TAB_GROUP_ID, 'share')}
-                          type="button"
-                          role="tab"
-                          aria-selected={statsPrimaryView === 'share'}
-                          aria-controls={buildTabPanelId(STATS_ANALYSIS_TAB_GROUP_ID, 'share')}
-                          tabIndex={statsPrimaryView === 'share' ? 0 : -1}
-                          className={
-                            statsPrimaryView === 'share'
-                              ? 'stats-analysis-tab is-active'
-                              : 'stats-analysis-tab'
-                          }
-                          onClick={() => setStatsPrimaryView('share')}
-                        >
-                          项目占比
-                        </button>
-                        <button
-                          id={buildTabId(STATS_ANALYSIS_TAB_GROUP_ID, 'review')}
-                          type="button"
-                          role="tab"
-                          aria-selected={statsPrimaryView === 'review'}
-                          aria-controls={buildTabPanelId(STATS_ANALYSIS_TAB_GROUP_ID, 'review')}
-                          tabIndex={statsPrimaryView === 'review' ? 0 : -1}
-                          className={
-                            statsPrimaryView === 'review'
-                              ? 'stats-analysis-tab is-active'
-                              : 'stats-analysis-tab'
-                          }
-                          onClick={() => setStatsPrimaryView('review')}
-                        >
-                          项目复盘
-                        </button>
+                    {!statsProject ? (
+                      <div className="share-list">
+                        {statsAnalytics.projectMetrics.length ? (
+                          statsAnalytics.projectMetrics.map((metric) => (
+                            <div key={metric.project.id} className="share-row">
+                              <div className="share-row__title">
+                                <span className="project-dot" style={{ backgroundColor: metric.project.color }}></span>
+                                <span>{metric.project.name}</span>
+                              </div>
+                              <div className="share-row__bar">
+                                <div
+                                  style={{
+                                    width: `${Math.max(6, projectSharePercent(metric, statsAnalytics.projectMetrics))}%`,
+                                    backgroundColor: metric.project.color,
+                                  }}
+                                ></div>
+                              </div>
+                              <strong>{projectSharePercent(metric, statsAnalytics.projectMetrics)}%</strong>
+                            </div>
+                          ))
+                        ) : (
+                          <EmptyState title="还没有统计数据" body="先去执行台完成几轮专注。" />
+                        )}
                       </div>
-                    </div>
-
-
-                    <div
-                      id={buildTabPanelId(STATS_ANALYSIS_TAB_GROUP_ID, 'share')}
-                      role="tabpanel"
-                      aria-labelledby={buildTabId(STATS_ANALYSIS_TAB_GROUP_ID, 'share')}
-                      hidden={statsPrimaryView !== 'share'}
-                      className="share-list"
-                    >
-                      {statsAnalytics.projectMetrics.length ? (
-                        statsAnalytics.projectMetrics.map((metric) => (
-                          <div key={metric.project.id} className="share-row">
-                            <div className="share-row__title">
-                              <span className="project-dot" style={{ backgroundColor: metric.project.color }}></span>
-                              <span>{metric.project.name}</span>
-                            </div>
-                            <div className="share-row__bar">
-                              <div
-                                style={{
-                                  width: `${Math.max(6, projectSharePercent(metric, statsAnalytics.projectMetrics))}%`,
-                                  backgroundColor: metric.project.color,
-                                }}
-                              ></div>
-                            </div>
-                            <strong>{projectSharePercent(metric, statsAnalytics.projectMetrics)}%</strong>
+                    ) : reviewMetric ? (
+                      <article className="project-metric-card">
+                        <div className="project-metric-card__head">
+                          <div>
+                            <h3>{reviewMetric.project.name}</h3>
+                            <p>
+                              {reviewMetric.doneTodos} 个已完成 / {reviewMetric.openTodos} 个待推进
+                            </p>
                           </div>
-                        ))
-                      ) : (
-                        <EmptyState title="还没有统计数据" body="先去执行台完成几轮专注。" />
-                      )}
-                    </div>
-
-                    <div
-                      id={buildTabPanelId(STATS_ANALYSIS_TAB_GROUP_ID, 'review')}
-                      role="tabpanel"
-                      aria-labelledby={buildTabId(STATS_ANALYSIS_TAB_GROUP_ID, 'review')}
-                      hidden={statsPrimaryView !== 'review'}
-                    >
-                      {!statsProject ? (
-                        <div className="project-review-list">
-                          {statsAnalytics.projectMetrics.length ? (
-                            statsAnalytics.projectMetrics.map((metric) => {
-                              const totalTodos = metric.doneTodos + metric.openTodos
-                              const completion = totalTodos > 0 ? Math.round((metric.doneTodos / totalTodos) * 100) : 0
-
-                              return (
-                                <button
-                                  key={metric.project.id}
-                                  type="button"
-                                  className="project-review-row"
-                                  onClick={() => setStatsProjectId(metric.project.id)}
-                                >
-                                  <div className="project-review-row__main">
-                                    <span
-                                      className="project-list-item__color"
-                                      style={{ backgroundColor: metric.project.color }}
-                                    ></span>
-                                    <div>
-                                      <strong>{metric.project.name}</strong>
-                                      <span>
-                                        已完成 {metric.doneTodos} / {totalTodos || 0}
-                                      </span>
-                                    </div>
-                                  </div>
-                                  <div className="project-review-row__side">
-                                    <strong>{completion}%</strong>
-                                    <div className="project-review-row__bar">
-                                      <div style={{ width: `${completion}%`, backgroundColor: metric.project.color }}></div>
-                                    </div>
-                                  </div>
-                                </button>
-                              )
-                            })
-                          ) : (
-                            <EmptyState title="还没有项目复盘" body="先去执行台完成几轮专注。" />
-                          )}
                         </div>
-                      ) : reviewMetric ? (
-                        <article className="project-metric-card">
-                          <div className="project-metric-card__head">
-                            <div>
-                              <h3>{reviewMetric.project.name}</h3>
-                              <p>
-                                {reviewMetric.doneTodos} 个已完成 / {reviewMetric.openTodos} 个待推进
-                              </p>
-                            </div>
+                        <div className="project-metric-card__stats">
+                          <div className="compact-stat">
+                            <span>实际番茄</span>
+                            <strong>{reviewMetric.completedPomodoros}</strong>
                           </div>
-                          <div className="project-metric-card__stats">
-                            <div className="compact-stat">
-                              <span>实际番茄</span>
-                              <strong>{reviewMetric.completedPomodoros}</strong>
-                            </div>
-                            <div className="compact-stat">
-                              <span>预估番茄</span>
-                              <strong>{reviewMetric.estimatedPomodoros}</strong>
-                            </div>
-                            <div className="compact-stat">
-                              <span>专注时长</span>
-                              <strong>{formatDuration(reviewMetric.focusDurationSec)}</strong>
-                            </div>
-                            <div className="compact-stat">
-                              <span>中断次数</span>
-                              <strong>{reviewMetric.interruptedCount}</strong>
-                            </div>
+                          <div className="compact-stat">
+                            <span>预估番茄</span>
+                            <strong>{reviewMetric.estimatedPomodoros}</strong>
                           </div>
-                        </article>
-                      ) : (
-                        <EmptyState title="没有项目复盘" body="完成几轮专注后这里会自动生成。" />
-                      )}
-                    </div>
+                          <div className="compact-stat">
+                            <span>专注时长</span>
+                            <strong>{formatDuration(reviewMetric.focusDurationSec)}</strong>
+                          </div>
+                          <div className="compact-stat">
+                            <span>中断次数</span>
+                            <strong>{reviewMetric.interruptedCount}</strong>
+                          </div>
+                        </div>
+                      </article>
+                    ) : (
+                      <EmptyState title="没有项目复盘" body="完成几轮专注后这里会自动生成。" />
+                    )}
                   </Panel>
                 </div>
 
