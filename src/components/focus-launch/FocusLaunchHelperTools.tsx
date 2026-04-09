@@ -4,7 +4,7 @@ type HelperToolId = 'steps' | 'assist' | 'review'
 
 type HelperTool = {
   id: HelperToolId
-  label: '步骤' | 'AI求助' | '复盘'
+  label: '步骤' | 'AI求助' | '下一步'
   ariaLabel: string
   className?: string
   onClick: () => void
@@ -32,15 +32,10 @@ const ReviewIcon = () => (
 )
 
 export function FocusLaunchHelperTools({
-  canReview,
   onOpenSteps,
   onOpenAssist,
   onOpenReview,
 }: FocusLaunchHelperToolsProps) {
-  const reviewTools: HelperTool[] = canReview
-    ? [{ id: 'review', label: '复盘', ariaLabel: '打开本轮复盘', className: 'focus-kickoff__helper-tool--review-ready', onClick: onOpenReview, icon: <ReviewIcon /> }]
-    : []
-
   const tools: HelperTool[] = [
     {
       id: 'steps',
@@ -56,7 +51,14 @@ export function FocusLaunchHelperTools({
       onClick: onOpenAssist,
       icon: <AssistIcon />,
     },
-    ...reviewTools,
+    {
+      id: 'review',
+      label: '下一步',
+      ariaLabel: '打开下一步引导',
+      className: 'focus-kickoff__helper-tool--review-ready',
+      onClick: onOpenReview,
+      icon: <ReviewIcon />,
+    },
   ]
 
   return (
@@ -83,7 +85,6 @@ export function FocusLaunchHelperTools({
 }
 
 type FocusLaunchHelperToolsProps = {
-  canReview: boolean
   onOpenSteps: () => void
   onOpenAssist: () => void
   onOpenReview: () => void
