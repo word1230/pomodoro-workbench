@@ -213,7 +213,16 @@ function App() {
     completedPomodoros: number
     targetPomodoros: number
   } | null>(null)
-  const [earlyFinishTodoId, setEarlyFinishTodoId] = useState<string | null>(null)
+  const [earlyFinishDecision, setEarlyFinishDecision] = useState<{
+    todoId: string
+    projectId: string
+    plannedDurationSec: number
+    remainingSec: number
+    completedPomodoros: number
+    targetPomodoros: number
+    phaseStartedAt: string | null
+    resumeTimerOnCancel: boolean
+  } | null>(null)
   const [selectedAiTodoIds, setSelectedAiTodoIds] = useState<string[]>([])
   const [focusFeedbackDraft, setFocusFeedbackDraft] = useState<FocusFeedbackDraft | null>(null)
   const [focusContinuationSuggestion, setFocusContinuationSuggestion] =
@@ -764,7 +773,7 @@ function App() {
     void primePhaseAlertSound()
 
     const target = Math.max(1, options?.targetPomodoros ?? plannedPomodoros)
-    const initialCompletedPomodoros = Math.max(0, options?.initialCompletedPomodoros ?? 0)
+    const initialCompletedPomodoros = Math.max(0, options?.initialCompletedPomodoros ?? nextTodo.completedPomodoros)
     const durationSec = Math.max(60, options?.durationSec ?? snapshot.settings.focusMinutes * 60)
     const startedAt = new Date().toISOString()
     const deadlineAt = new Date(Date.parse(startedAt) + durationSec * 1000).toISOString()
@@ -1671,29 +1680,38 @@ function App() {
   }
 
   const handleFinishFocusEarly = async (mode: 'completed' | 'abandoned') => {
-    if (!snapshot || !timer.todoId || !timer.projectId || timer.phase !== 'focus') {
+    if (!snapshot || !earlyFinishDecision) {
       return
     }
 
-    const todo = snapshot.todos.find((item) => item.id === timer.todoId)
+    const {
+      todoId,
+      projectId,
+      plannedDurationSec,
+      remainingSec,
+      completedPomodoros,
+      targetPomodoros,
+      phaseStartedAt,
+    } = earlyFinishDecision
+    const todo = snapshot.todos.find((item) => item.id === todoId)
     if (!todo) {
       return
     }
 
-    setEarlyFinishTodoId(null)
+    setEarlyFinishDecision(null)
     setPhaseAlertPrompt(null)
 
     const now = new Date().toISOString()
-    const actualDurationSec = Math.max(60, timer.plannedDurationSec - timer.remainingSec)
+    const actualDurationSec = Math.max(60, plannedDurationSec - remainingSec)
 
     await syncSnapshot(
       recordFocusSession({
-        projectId: timer.projectId,
-        todoId: timer.todoId,
+        projectId,
+        todoId,
         type: 'focus',
-        plannedDurationSec: timer.plannedDurationSec,
+        plannedDurationSec,
         actualDurationSec,
-        startedAt: timer.phaseStartedAt ?? now,
+        startedAt: phaseStartedAt ?? now,
         endedAt: now,
         result: mode === 'completed' ? 'completed' : 'interrupted',
         interruptReason: mode === 'completed' ? '提前结束并计入完成' : '提前结束且不计入',
@@ -1701,16 +1719,15 @@ function App() {
       { silent: true },
     )
 
-    const nextCompleted = mode === 'completed' ? timer.completedPomodoros + 1 : timer.completedPomodoros
+    const nextCompleted = mode === 'completed' ? completedPomodoros + 1 : completedPomodoros
 
     if (mode === 'completed') {
-      setEarlyFinishTodoId(null)
-      if (timer.completedPomodoros + 1 >= timer.targetPomodoros) {
+      if (nextCompleted >= targetPomodoros) {
         setTimer(idleTimer)
         setFocusCompletionDecision({
           todoId: todo.id,
           completedPomodoros: nextCompleted,
-          targetPomodoros: timer.targetPomodoros,
+          targetPomodoros,
         })
         void surfacePhaseAlertWindow()
         setMessage('已提前结束并进入最终确认')
@@ -1718,12 +1735,6 @@ function App() {
       }
 
       setTimer(idleTimer)
-      setFocusCompletionDecision({
-        todoId: todo.id,
-        completedPomodoros: nextCompleted,
-        targetPomodoros: timer.targetPomodoros,
-      })
-      void surfacePhaseAlertWindow()
       setMessage('已提前结束并计入本轮番茄')
       return
     }
@@ -1733,15 +1744,40 @@ function App() {
   }
 
   const handleOpenEarlyFinish = () => {
-    if (timer.phase !== 'focus' || !timer.todoId) {
+    if (timer.phase !== 'focus' || !timer.todoId || !timer.projectId) {
       return
     }
 
-    setEarlyFinishTodoId(timer.todoId)
+    setEarlyFinishDecision({
+      todoId: timer.todoId,
+      projectId: timer.projectId,
+      plannedDurationSec: timer.plannedDurationSec,
+      remainingSec: timer.remainingSec,
+      completedPomodoros: timer.completedPomodoros,
+      targetPomodoros: timer.targetPomodoros,
+      phaseStartedAt: timer.phaseStartedAt,
+      resumeTimerOnCancel: timer.running,
+    })
+    setTimer((current) => (current.phase === 'focus' ? setTimerRunning(current, false) : current))
   }
 
   const handleCancelEarlyFinish = () => {
-    setEarlyFinishTodoId(null)
+    if (!earlyFinishDecision) {
+      return
+    }
+
+    setTimer((current) => {
+      if (
+        current.phase !== 'focus' ||
+        current.todoId !== earlyFinishDecision.todoId ||
+        current.projectId !== earlyFinishDecision.projectId
+      ) {
+        return current
+      }
+
+      return setTimerRunning(current, earlyFinishDecision.resumeTimerOnCancel)
+    })
+    setEarlyFinishDecision(null)
   }
 
   const handleFocusFeedbackFieldChange = (
@@ -3180,7 +3216,7 @@ function App() {
         </ModalShell>
       ) : null}
 
-      {earlyFinishTodoId ? (
+      {earlyFinishDecision ? (
         <ModalShell
           title="提前结束本轮"
           className="modal-card--compact"
@@ -3189,7 +3225,7 @@ function App() {
           <div className="confirm-dialog">
             <p>
               {(() => {
-                const todo = todos.find((item) => item.id === earlyFinishTodoId)
+                const todo = todos.find((item) => item.id === earlyFinishDecision.todoId)
                 return todo
                   ? `要怎么处理「${todo.title}」当前这轮番茄？`
                   : '要怎么处理当前这轮番茄？'

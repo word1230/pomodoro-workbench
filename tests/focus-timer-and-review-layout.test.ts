@@ -32,13 +32,37 @@ test('ai assist reason picker stays minimal and upgrades the four option tiles',
 })
 
 
-test('focus timer keeps the early-finish decision modal before the final completion decision', async () => {
+test('non-final early finish completion only records the current pomodoro without opening final confirmation', async () => {
+  const appTsx = await readFile(appTsxPath, 'utf8')
+  const completedBranch = extractBlock(
+    appTsx,
+    /if \(mode === 'completed'\) \{[\s\S]*setMessage\('已提前结束并计入本轮番茄'\)\s*return\s*\}/,
+    'expected to find completed early finish branch',
+  )
+
+  assert.match(completedBranch, /if \(nextCompleted >= targetPomodoros\) \{[\s\S]*setMessage\('已提前结束并进入最终确认'\)\s*return\s*\}\s*setTimer\(idleTimer\)\s*setMessage\('已提前结束并计入本轮番茄'\)\s*return/)
+  assert.doesNotMatch(appTsx, /if \(timer\.completedPomodoros \+ 1 >= timer\.targetPomodoros\)/)
+})
+
+test('last-pomodoro early finish snapshots timer state before opening final completion confirmation', async () => {
   const appTsx = await readFile(appTsxPath, 'utf8')
 
-  assert.match(appTsx, /const \[earlyFinishTodoId, setEarlyFinishTodoId\] = useState<string \| null>\(null\)/)
-  assert.match(appTsx, /setEarlyFinishTodoId\(timer\.todoId\)/)
-  assert.doesNotMatch(appTsx, /const willReachFinalConfirmation = timer\.completedPomodoros \+ 1 >= timer\.targetPomodoros/)
-  assert.doesNotMatch(appTsx, /if \(willReachFinalConfirmation\) \{[\s\S]*void handleFinishFocusEarly\('completed'\)/)
+  assert.match(appTsx, /const \[earlyFinishDecision, setEarlyFinishDecision\] = useState<\{[\s\S]*completedPomodoros: number[\s\S]*targetPomodoros: number[\s\S]*resumeTimerOnCancel: boolean[\s\S]*\} \| null>\(null\)/)
+  assert.match(appTsx, /setEarlyFinishDecision\(\{[\s\S]*completedPomodoros: timer\.completedPomodoros,[\s\S]*targetPomodoros: timer\.targetPomodoros,[\s\S]*resumeTimerOnCancel: timer\.running,[\s\S]*\}\)/)
+  assert.match(appTsx, /setTimer\(\(current\) => \(current\.phase === 'focus' \? setTimerRunning\(current, false\) : current\)\)/)
+  assert.match(appTsx, /if \(!snapshot \|\| !earlyFinishDecision\) \{/)
+  assert.match(appTsx, /const nextCompleted = mode === 'completed' \? completedPomodoros \+ 1 : completedPomodoros/)
+  assert.match(appTsx, /if \(nextCompleted >= targetPomodoros\) \{[\s\S]*setFocusCompletionDecision\(\{[\s\S]*targetPomodoros,[\s\S]*\}\)[\s\S]*setMessage\('已提前结束并进入最终确认'\)/)
+})
+
+test('canceling early finish restores the paused or running timer state from the saved decision', async () => {
+  const appTsx = await readFile(appTsxPath, 'utf8')
+
+  assert.match(appTsx, /if \(!earlyFinishDecision\) \{\s*return\s*\}/)
+  assert.match(appTsx, /current\.todoId !== earlyFinishDecision\.todoId/)
+  assert.match(appTsx, /current\.projectId !== earlyFinishDecision\.projectId/)
+  assert.match(appTsx, /return setTimerRunning\(current, earlyFinishDecision\.resumeTimerOnCancel\)/)
+  assert.match(appTsx, /setEarlyFinishDecision\(null\)/)
 })
 
 test('next-step guidance modal keeps clean copy and upgrades generated input styling', async () => {
@@ -126,7 +150,7 @@ test('focus timer adds early finish controls and completion confirmation flow', 
   const appTsx = await readFile(appTsxPath, 'utf8')
 
   assert.match(appTsx, /const \[focusCompletionDecision, setFocusCompletionDecision\] = useState</)
-  assert.match(appTsx, /const \[earlyFinishTodoId, setEarlyFinishTodoId\] = useState<string \| null>\(null\)/)
+  assert.match(appTsx, /const \[earlyFinishDecision, setEarlyFinishDecision\] = useState</)
   assert.match(appTsx, /handleFinishFocusEarly = async \(mode: 'completed' \| 'abandoned'\)/)
   assert.match(appTsx, />\s*提前结束\s*</)
   assert.doesNotMatch(appTsx, />\s*终止\s*</)
@@ -134,6 +158,17 @@ test('focus timer adds early finish controls and completion confirmation flow', 
   assert.match(appTsx, />\s*任务已完成\s*</)
   assert.match(appTsx, />\s*任务已完成，计入本轮\s*</)
   assert.match(appTsx, />\s*提前结束，不计入番茄\s*</)
+})
+
+test('resume focus run inherits completed pomodoros from the selected todo by default', async () => {
+  const appTsx = await readFile(appTsxPath, 'utf8')
+
+  assert.match(appTsx, /onClick=\{\(\) => void startFocusRun\(\)\}/)
+  assert.match(
+    appTsx,
+    /const initialCompletedPomodoros = Math\.max\(0, options\?\.initialCompletedPomodoros \?\? nextTodo\.completedPomodoros\)/,
+  )
+  assert.doesNotMatch(appTsx, /const initialCompletedPomodoros = Math\.max\(0, options\?\.initialCompletedPomodoros \?\? 0\)/)
 })
 
 test('launch board removes redundant edit-step button and keeps helper tool entry', async () => {
