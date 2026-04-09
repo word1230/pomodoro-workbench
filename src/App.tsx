@@ -73,10 +73,12 @@ import {
 } from './lib/todo-ai'
 import {
   buildTodoDraftFromTodo,
+  formatTodoStepsDraft,
   getCurrentTodoStep,
   getResolvedTodoSteps,
   normalizeTodoDraft,
   parseTodoSteps,
+  syncTodoStepEditorState,
 } from './lib/todo-steps'
 import {
   PHASE_REMINDER_INITIAL_DELAY_MS,
@@ -261,7 +263,7 @@ function App() {
     steps: [],
     currentStepIndex: 0,
   })
-  const todoFormStepsText = todoForm.steps.join('\n')
+  const [todoStepsDraft, setTodoStepsDraft] = useState('')
   const deferredSnapshot = useDeferredValue(snapshot)
 
   const analytics = useMemo(
@@ -1219,6 +1221,7 @@ function App() {
           currentStepIndex: todo.currentStepIndex,
         }),
       )
+      setTodoStepsDraft(formatTodoStepsDraft(resolvedSteps))
     } else {
       setTodoForm(
         normalizeTodoDraft({
@@ -1236,6 +1239,7 @@ function App() {
           currentStepIndex: 0,
         }),
       )
+      setTodoStepsDraft('')
     }
     setTodoEditorOpen(true)
   }
@@ -1271,8 +1275,7 @@ function App() {
 
     const nextDraft = normalizeTodoDraft({
       ...todoForm,
-      steps: todoForm.steps,
-      currentStepIndex: todoForm.currentStepIndex,
+      ...syncTodoStepEditorState(todoStepsDraft, todoForm.currentStepIndex),
     })
 
     const next = await syncSnapshot(saveTodo(nextDraft), {
@@ -1294,6 +1297,7 @@ function App() {
 
   const closeTodoEditor = () => {
     setTodoEditorOpen(false)
+    setTodoStepsDraft('')
   }
 
   const handleDeleteTodo = async (todoId: string) => {
@@ -3687,13 +3691,14 @@ function App() {
                 <span>步骤</span>
                 <textarea
                   rows={4}
-                  value={todoFormStepsText}
+                  value={todoStepsDraft}
                   onChange={(event) => {
-                    const nextSteps = parseTodoSteps(event.target.value)
+                    const nextStepsDraft = event.target.value
+                    const nextStepState = syncTodoStepEditorState(nextStepsDraft, todoForm.currentStepIndex)
+                    setTodoStepsDraft(nextStepsDraft)
                     setTodoForm({
                       ...todoForm,
-                      steps: nextSteps,
-                      currentStepIndex: Math.min(todoForm.currentStepIndex, Math.max(nextSteps.length - 1, 0)),
+                      ...nextStepState,
                     })
                   }}
                   placeholder="每行一步"
@@ -3746,6 +3751,7 @@ function App() {
                       className="action-button action-button--ghost"
                       onClick={() => {
                         const nextSteps = todoForm.steps.filter((_, index) => index !== todoForm.currentStepIndex)
+                        setTodoStepsDraft(formatTodoStepsDraft(nextSteps))
                         setTodoForm({
                           ...todoForm,
                           steps: nextSteps,

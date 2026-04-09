@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { parseTodoSteps } from '../src/lib/todo-steps.ts'
+import { formatTodoStepsDraft, parseTodoSteps, syncTodoStepEditorState } from '../src/lib/todo-steps.ts'
 
 test('parseTodoSteps preserves numeric prefixes in multiline plain text', () => {
   assert.deepEqual(parseTodoSteps('2FA 登录\n3D 建模\n2026.04 对账'), [
@@ -44,4 +44,22 @@ test('parseTodoSteps still extracts numbered items from a single paragraph', () 
     '运行测试',
     '提交结果',
   ])
+})
+
+test('formatTodoStepsDraft joins cleaned steps for editor initialization', () => {
+  assert.equal(formatTodoStepsDraft([' 打开项目 ', '', '运行测试 ']), '打开项目\n运行测试')
+})
+
+test('syncTodoStepEditorState keeps structured steps clean when draft ends with a newline', () => {
+  assert.deepEqual(syncTodoStepEditorState('打开项目\n', 3), {
+    steps: ['打开项目'],
+    currentStepIndex: 0,
+  })
+})
+
+test('syncTodoStepEditorState clamps currentStepIndex after later lines are removed', () => {
+  assert.deepEqual(syncTodoStepEditorState('打开项目', 2), {
+    steps: ['打开项目'],
+    currentStepIndex: 0,
+  })
 })

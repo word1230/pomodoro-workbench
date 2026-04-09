@@ -100,6 +100,25 @@ export function parseTodoSteps(value: string): string[] {
   return [normalized.replace(/\s+/g, ' ')]
 }
 
+export function formatTodoStepsDraft(steps: string[] | undefined): string {
+  return cleanStepList(steps).join('\n')
+}
+
+export function syncTodoStepEditorState(
+  draft: string,
+  currentStepIndex: number,
+): Pick<TodoDraft, 'steps' | 'currentStepIndex'> {
+  const steps = parseTodoSteps(draft)
+  const safeCurrentStepIndex = Number.isFinite(currentStepIndex)
+    ? Math.max(0, Math.trunc(currentStepIndex))
+    : 0
+
+  return {
+    steps,
+    currentStepIndex: Math.min(safeCurrentStepIndex, Math.max(steps.length - 1, 0)),
+  }
+}
+
 export function getResolvedTodoSteps(todo: TodoStepSource): string[] {
   const explicitSteps = cleanStepList(todo.steps)
   if (explicitSteps.length) {
